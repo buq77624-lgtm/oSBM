@@ -125,6 +125,11 @@ GraphicsMenu::GraphicsMenu(PaneManager* manager,UniverseClientPtr client)
 
   m_interfaceScaleList = jsonToFloatList(assets->json("/interface/windowconfig/graphicsmenu.config:interfaceScaleList"));
 #if STAR_SYSTEM_ANDROID || STAR_SYSTEM_IOS
+  m_interfaceScaleList = {
+    0.0f,
+    0.35f, 0.4f, 0.45f, 0.5f, 0.55f, 0.6f, 0.65f, 0.7f, 0.75f, 0.8f, 0.85f, 0.9f, 1.0f,
+    1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f, 1.9f, 2.0f, 2.25f, 2.5f, 3.0f
+  };
   Vec2U physicalSize = GuiContext::singleton().windowSize();
   if (physicalSize[0] < physicalSize[1])
     std::swap(physicalSize[0], physicalSize[1]);

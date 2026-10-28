@@ -338,17 +338,7 @@ bool MainInterface::handleInputEvent(InputEvent const& event) {
   if (auto directionalAim = event.ptr<DirectionalAimEvent>())
     return handleDirectionalAimEvent(*directionalAim);
 
-  InputEvent effectiveEvent = event;
-  if (m_mobileDirectionalAimActive) {
-    if (auto mouseDown = event.ptr<MouseButtonDownEvent>())
-      effectiveEvent = MouseButtonDownEvent{mouseDown->mouseButton, m_cursorScreenPos};
-    else if (auto mouseUp = event.ptr<MouseButtonUpEvent>())
-      effectiveEvent = MouseButtonUpEvent{mouseUp->mouseButton, m_cursorScreenPos};
-    else if (auto mouseWheel = event.ptr<MouseWheelEvent>())
-      effectiveEvent = MouseWheelEvent{mouseWheel->mouseWheel, m_cursorScreenPos};
-  }
-
-  if (auto keyDown = effectiveEvent.ptr<KeyDownEvent>()) {
+  if (auto keyDown = event.ptr<KeyDownEvent>()) {
     if (keyDown->key == Key::Pause) {
       m_paneManager.toggleRegisteredPane(MainInterfacePanes::EscapeDialog);
       return true;
@@ -359,13 +349,22 @@ bool MainInterface::handleInputEvent(InputEvent const& event) {
     }
   }
 
-  if (m_paneManager.sendInputEvent(effectiveEvent)) {
-    if (!effectiveEvent.is<MouseButtonUpEvent>() && !effectiveEvent.is<KeyUpEvent>())
+  // 移动端优先判定主界面右侧竖栏（背包、制作、法典、任务、传送等按钮）
+  if (auto mouseDown = event.ptr<MouseButtonDownEvent>()) {
+    auto mouseButton = mouseDown->mouseButton;
+    if (mouseButton >= MouseButton::Left && mouseButton <= MouseButton::Right
+        && overlayClick(mouseDown->mousePosition, mouseButton)) {
+      return true;
+    }
+  }
+
+  if (m_paneManager.sendInputEvent(event)) {
+    if (!event.is<MouseButtonUpEvent>() && !event.is<KeyUpEvent>())
       return true;
   }
 
-  if (effectiveEvent.is<KeyDownEvent>()) {
-    auto actions = m_guiContext->actions(effectiveEvent);
+  if (event.is<KeyDownEvent>()) {
+    auto actions = m_guiContext->actions(event);
 
     if (m_chat->hasFocus()) {
       if (actions.contains(InterfaceAction::ChatSendLine)) {
@@ -435,18 +434,21 @@ bool MainInterface::handleInputEvent(InputEvent const& event) {
 
     return false;
 
-  } else if (auto keyUp = effectiveEvent.ptr<KeyUpEvent>()) {
+  } else if (auto keyUp = event.ptr<KeyUpEvent>()) {
     if (m_guiContext->actionsForKey(keyUp->key).contains(InterfaceAction::GuiShifting))
       m_guiContext->setShiftHeld(false);
 
     return false;
 
-  } else if (auto mouseDown = effectiveEvent.ptr<MouseButtonDownEvent>()) {
+  } else if (auto mouseDown = event.ptr<MouseButtonDownEvent>()) {
     auto mouseButton = mouseDown->mouseButton;
     if (mouseButton >= MouseButton::Left && mouseButton <= MouseButton::Right
     && overlayClick(mouseDown->mousePosition, mouseDown->mouseButton)) {
       return true;
     } else {
+      if (!m_mobileDirectionalAimActive)
+        m_cursorScreenIPos = Vec2I::round(m_cursorScreenPos = mouseDown->mousePosition);
+
       if (mouseButton == MouseButton::Left)
         player->beginPrimaryFire();
       if (mouseButton == MouseButton::Right)
@@ -454,7 +456,7 @@ bool MainInterface::handleInputEvent(InputEvent const& event) {
       if (mouseButton == MouseButton::Middle)
         player->beginTrigger();
     }
-  } else if (auto mouseUp = effectiveEvent.ptr<MouseButtonUpEvent>()) {
+  } else if (auto mouseUp = event.ptr<MouseButtonUpEvent>()) {
     if (mouseUp->mouseButton == MouseButton::Left)
       player->endPrimaryFire();
     if (mouseUp->mouseButton == MouseButton::Right)
@@ -466,7 +468,7 @@ bool MainInterface::handleInputEvent(InputEvent const& event) {
   bool captured = false;
 
   for (auto& pair : m_canvases)
-    captured |= pair.second->sendEvent(effectiveEvent);
+    captured |= pair.second->sendEvent(event);
 
   return captured;
 }
@@ -2144,7 +2146,15 @@ bool MainInterface::overButton(PolyI const& buttonPoly, Vec2F const& mousePos) c
   PolyF poly(buttonPoly);
   poly.translate(barPos);
   poly.scale(interfaceScale(), Vec2F(barPos));
-  return poly.contains(mousePos);
+  if (poly.contains(mousePos))
+    return true;
+#if STAR_SYSTEM_ANDROID || STAR_SYSTEM_IOS
+  RectF bound = poly.boundBox();
+  bound.pad(12.0f);
+  if (bound.contains(mousePos))
+    return true;
+#endif
+  return false;
 }
 
 bool MainInterface::overlayClick(Vec2F const& mousePos, MouseButton) {
