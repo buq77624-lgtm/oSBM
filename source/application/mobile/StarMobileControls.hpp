@@ -66,7 +66,7 @@ struct MobileTouchConfig {
   // secondary aim/use) so upgrading users see no change. MobileTouchActionKind::None
   // ("No Action" in the picker) makes the gesture do nothing but still move
   // the cursor.
-  MobileTouchAction directTouchSingleAction = MobileTouchAction{MobileTouchActionKind::None, Key::Space, MouseButton::Left};
+  MobileTouchAction directTouchSingleAction = MobileTouchAction{MobileTouchActionKind::MouseButton, Key::Space, MouseButton::Left};
   MobileTouchAction directTouchTwoFingerAction = MobileTouchAction{MobileTouchActionKind::MouseButton, Key::Space, MouseButton::Right};
   // Whether the aim cursor is drawn while aiming with a joystick -- the
   // touch-screen's built-in aim-joystick element, or a physical controller's

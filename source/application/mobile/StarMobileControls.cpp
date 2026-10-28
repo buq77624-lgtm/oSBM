@@ -202,14 +202,14 @@ PerformanceCounterMode perfCounterModeFromName(String const& name, PerformanceCo
 std::vector<MobileTouchElement> defaultTouchElements() {
   return {
     {"joystick", launcherTextStatic("touchElement.joystick", "Joystick"), MobileTouchElementKind::Joystick, true, {0.14f, 0.72f}, 1.25f, keyAction(Key::Space), {}, {}, {}, {}},
-    {"aimJoystick", launcherTextStatic("touchElement.aimJoystick", "Aim"), MobileTouchElementKind::AimJoystick, true, {0.82f, 0.72f}, 1.35f, noneAction(), {}, {}, {}, {}},
-    {"altFire", launcherTextStatic("touchElement.altFire", "Alt"), MobileTouchElementKind::Button, true, {0.69f, 0.70f}, 1.05f, mouseAction(MouseButton::Right), {}, {}, {}, {}},
-    {"jump", launcherTextStatic("touchElement.jump", "Jump"), MobileTouchElementKind::Button, true, {0.73f, 0.86f}, 1.10f, keyAction(Key::Space), {}, {}, {}, {}},
-    {"interact", launcherTextStatic("touchElement.interact", "E"), MobileTouchElementKind::Button, true, {0.76f, 0.54f}, 1.00f, keyAction(Key::E), {}, {}, {}, {}},
-    {"tech", launcherTextStatic("touchElement.tech", "Tech"), MobileTouchElementKind::Button, true, {0.87f, 0.50f}, 0.95f, keyAction(Key::F), {}, {}, {}, {}},
+    {"leftHand", launcherTextStatic("touchElement.leftHand", "Attack"), MobileTouchElementKind::Button, true, {0.84f, 0.72f}, 1.25f, mouseAction(MouseButton::Left), {}, {}, {}, {}},
+    {"altFire", launcherTextStatic("touchElement.altFire", "Alt"), MobileTouchElementKind::Button, true, {0.70f, 0.70f}, 1.05f, mouseAction(MouseButton::Right), {}, {}, {}, {}},
+    {"jump", launcherTextStatic("touchElement.jump", "Jump"), MobileTouchElementKind::Button, true, {0.74f, 0.86f}, 1.10f, keyAction(Key::Space), {}, {}, {}, {}},
+    {"interact", launcherTextStatic("touchElement.interact", "E"), MobileTouchElementKind::Button, true, {0.78f, 0.54f}, 1.00f, keyAction(Key::E), {}, {}, {}, {}},
+    {"tech", launcherTextStatic("touchElement.tech", "Tech"), MobileTouchElementKind::Button, true, {0.89f, 0.52f}, 0.95f, keyAction(Key::F), {}, {}, {}, {}},
     {"shift", launcherTextStatic("touchElement.shift", "Shift"), MobileTouchElementKind::Button, true, {0.08f, 0.45f}, 0.85f, keyAction(Key::LShift), {}, {}, {}, {}},
     {"pause", launcherTextStatic("touchElement.pause", "ESC"), MobileTouchElementKind::Button, true, {0.05f, 0.16f}, 0.80f, keyAction(Key::Escape), {}, {}, {}, {}},
-    {"leftHand", launcherTextStatic("touchElement.leftHand", "L"), MobileTouchElementKind::Button, false, {0.30f, 0.16f}, 0.92f, mouseAction(MouseButton::Left), {}, {}, {}, {}},
+    {"aimJoystick", launcherTextStatic("touchElement.aimJoystick", "Aim"), MobileTouchElementKind::AimJoystick, false, {0.84f, 0.72f}, 1.35f, noneAction(), {}, {}, {}, {}},
     {"rightHand", launcherTextStatic("touchElement.rightHand", "R"), MobileTouchElementKind::Button, false, {0.64f, 0.16f}, 0.92f, mouseAction(MouseButton::Right), {}, {}, {}, {}},
     {"chat", launcherTextStatic("touchElement.chat", "T"), MobileTouchElementKind::Button, false, {0.83f, 0.90f}, 0.72f, keyAction(Key::Return), {}, {}, {}, {}},
     {"ctrl", launcherTextStatic("touchElement.ctrl", "Ctrl"), MobileTouchElementKind::Button, false, {0.58f, 0.88f}, 0.82f, keyAction(Key::LCtrl), {}, {}, {}, {}},
@@ -1241,14 +1241,11 @@ private:
         break;
       case FingerRole::Aim:
         if (m_primaryMouseHeld) {
-          // The cursor position was already kept in sync via emitMouseMove
-          // during updateFinger, so releasing here reads that tracked
-          // position rather than the raw release pos (in touchpad mode they
-          // can differ significantly -- cursor position is delta-tracked,
-          // not 1:1 with the finger).
           releaseDirectGestureAction(m_config.directTouchSingleAction, DirectTouchSingleOwner);
           m_primaryMouseHeld = false;
         }
+        if (tap)
+          emitMouseClick(m_primaryTouchPos, MouseButton::Left);
         m_primaryHeld = false;
         m_aimFinger = 0;
         break;

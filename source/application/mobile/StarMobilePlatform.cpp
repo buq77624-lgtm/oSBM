@@ -918,12 +918,25 @@ private:
     auto& style = ImGui::GetStyle();
     style.TouchExtraPadding = ImVec2(12.0f * scale, 12.0f * scale);
     style.WindowPadding = ImVec2(18.0f * scale, 16.0f * scale);
-    style.FramePadding = ImVec2(15.0f * scale, 10.0f * scale);
+    style.FramePadding = ImVec2(16.0f * scale, 12.0f * scale);
     style.ItemSpacing = ImVec2(14.0f * scale, 12.0f * scale);
     style.ScrollbarSize = 28.0f * scale;
 
+    style.WindowRounding = 12.0f * scale;
+    style.ChildRounding = 8.0f * scale;
+    style.FrameRounding = 8.0f * scale;
+    style.PopupRounding = 8.0f * scale;
+    style.ScrollbarRounding = 10.0f * scale;
+    style.GrabRounding = 6.0f * scale;
+    style.TabRounding = 6.0f * scale;
+    style.WindowBorderSize = 1.0f;
+    style.FrameBorderSize = 0.5f;
+
     auto& colors = style.Colors;
     auto const& accent = m_launcherUiConfig.accentColor;
+    colors[ImGuiCol_WindowBg] = ImVec4(0.07f, 0.09f, 0.14f, 0.98f);
+    colors[ImGuiCol_ChildBg] = ImVec4(0.10f, 0.14f, 0.20f, 0.65f);
+    colors[ImGuiCol_Border] = ImVec4(0.22f, 0.32f, 0.46f, 0.60f);
     colors[ImGuiCol_Button] = launcherColor(accent, 0.62f);
     colors[ImGuiCol_ButtonHovered] = launcherColorScaled(accent, 1.15f, 0.86f);
     colors[ImGuiCol_ButtonActive] = launcherColorScaled(accent, 0.82f, 0.96f);
@@ -3638,41 +3651,107 @@ private:
     } else {
       beginLauncherScrollArea("LauncherMainScroll", state, false);
 
-      ImGui::TextWrapped("%s", launcherText("launcher.configureHint", "Configure assets and controls before launching.").utf8Ptr());
-      ImGui::Separator();
+      float scale = launcherUiScale();
+      state.canLaunch = File::isFile(state.packedPakPath);
 
-      ImGui::Text("%s: %s", launcherText("launcher.packedPakLabel", "packed.pak").utf8Ptr(), state.packedPakPath.empty() ? launcherText("launcher.notSelected", "<not selected>").utf8Ptr() : state.packedPakPath.utf8Ptr());
-#ifdef STAR_SYSTEM_SWITCH
-      // Switch builds don't embed packed.pak and have no native file picker
-      // (see the SD-card fallback check in loadLauncherState), so this is the
-      // only way a user finds out where to put the file. Path is shown
-      // separately from the translated sentence so a translation can't drop
-      // or mangle it (no embedded {} placeholder to lose in translation).
-      if (state.packedPakPath.empty()) {
-        ImGui::TextWrapped("%s", launcherText("launcher.packedPakSwitchHint",
-            "Copy packed.pak to this path on the SD card, then restart oSBM:").utf8Ptr());
-        ImGui::TextWrapped("%s", File::relativeTo(m_storageRoot, "assets/packed.pak").utf8Ptr());
+      // ==========================================
+      // 1. Top Header Banner & Status
+      // ==========================================
+      ImGui::Spacing();
+      ImGui::TextColored(ImVec4(0.38f, 0.78f, 1.0f, 1.0f), "STARBOUND MOBILE");
+      ImGui::SameLine();
+      ImGui::TextDisabled("v1.1.0");
+      ImGui::SameLine();
+      if (state.canLaunch) {
+        ImGui::TextColored(ImVec4(0.18f, 0.88f, 0.45f, 1.0f), "[ ✔ %s ]", launcherText("launcher.readyStatus", "Assets Ready").utf8Ptr());
+      } else {
+        ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.25f, 1.0f), "[ ⚠ %s ]", launcherText("launcher.needsAssets", "packed.pak Needed").utf8Ptr());
       }
-#elif !defined(STAR_SYSTEM_ANDROID) && !defined(STAR_SYSTEM_IOS)
-      // Desktop launcher: "Pick packed.pak" below opens a native file dialog
-      // (see startDesktopPackedPakPicker), but manually dropping the file at
-      // the auto-detected location still works too (loadLauncherState's
-      // desktop fallback), so keep the hint visible until something's picked.
-      if (state.packedPakPath.empty()) {
-        ImGui::TextWrapped("%s", launcherText("launcher.packedPakDesktopHint",
-            "Copy packed.pak to this path, then relaunch (or use Pick packed.pak):").utf8Ptr());
-        ImGui::TextWrapped("%s", File::relativeTo(m_storageRoot, "assets/packed.pak").utf8Ptr());
+
+      ImGui::Spacing();
+
+      // ==========================================
+      // 2. HERO LAUNCH BUTTON (Big, Vibrant, Eye-catching)
+      // ==========================================
+      bool launchDisabled = !state.canLaunch || state.asyncActionRunning;
+      if (state.canLaunch) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f, 0.58f, 0.35f, 0.95f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.12f, 0.72f, 0.42f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.05f, 0.45f, 0.28f, 1.0f));
+      } else {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.28f, 0.32f, 0.38f, 0.80f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.40f, 0.48f, 0.90f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.22f, 0.26f, 0.32f, 1.0f));
       }
-#endif
+
+      ImVec2 launchBtnSize = ImVec2(-1.0f, std::max(48.0f, 52.0f * scale));
+      if (ImGui::Button(state.canLaunch ? launcherText("launcher.heroLaunchReady", "▶  START STARBOUND (Launch Game)").utf8Ptr()
+                                       : launcherText("launcher.heroLaunchNeedsPak", "⚠  Please Select packed.pak First").utf8Ptr(), launchBtnSize)) {
+        if (state.canLaunch && !state.asyncActionRunning) {
+          launchPressed = true;
+        } else if (!state.canLaunch) {
+          state.lastStatus = launcherText("launcher.promptSelectPak", "Please click 'Pick packed.pak' below to select your game assets!");
+        }
+      }
+      ImGui::PopStyleColor(3);
+
+      bool quickStartAvailable = !m_activeGamepadName.empty();
+      bool quickStartEnabled = quickStartAvailable && !launchDisabled;
+      if (quickStartAvailable) {
+        int64_t heldMs = m_launcherQuickStartButtonHeld ? Time::monotonicMilliseconds() - m_launcherQuickStartStartMs : 0;
+        renderLauncherQuickStartPrompt((float)heldMs / (float)LauncherQuickStartHoldMs, quickStartEnabled);
+        if (quickStartEnabled && heldMs >= LauncherQuickStartHoldMs)
+          launchPressed = true;
+      }
+
+      ImGui::Spacing();
+      ImGui::Separator();
+      ImGui::Spacing();
+
+      float halfW = (ImGui::GetContentRegionAvail().x - 12.0f * scale) * 0.5f;
+
+      // ==========================================
+      // 3. CARD: Touch Controls & Layout Editor
+      // ==========================================
+      ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.14f, 0.22f, 0.70f));
+      ImGui::BeginChild("TouchCard", ImVec2(0, 115.0f * scale), true, ImGuiWindowFlags_None);
+      ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.0f, 1.0f), "🎮  %s", launcherText("launcher.touchSectionTitle", "Touch Controls & HUD Layout").utf8Ptr());
+      ImGui::TextDisabled("%s: %s | %s", launcherText("launcher.touchModeActive", "Ergonomic Skill Cluster").utf8Ptr(),
+        state.touchConfig.enabled ? launcherText("common.touchOn", "Touch On").utf8Ptr() : launcherText("common.touchOff", "Touch Off").utf8Ptr(),
+        state.gamepadConfig.enabled ? launcherText("common.gamepadOn", "Gamepad On").utf8Ptr() : launcherText("common.gamepadOff", "Gamepad Off").utf8Ptr());
+
+      if (ImGui::Button(launcherText("touchManager.previewAdjust", "🎨 Customize Button Layout (Drag & Resize)").utf8Ptr(), ImVec2(halfW, 40.0f * scale))) {
+        state.touchPreviewOpen = true;
+      }
+      ImGui::SameLine();
+      if (ImGui::Button(launcherText("launcher.touchControls", "⚙ Touch & Gyro Settings").utf8Ptr(), ImVec2(halfW, 40.0f * scale))) {
+        state.touchManagerOpen = true;
+        state.gamepadManagerOpen = false;
+        state.selectedTouchElement = std::clamp(state.selectedTouchElement, 0, (int)state.touchElements.size() - 1);
+      }
+      ImGui::EndChild();
+      ImGui::PopStyleColor();
+
+      ImGui::Spacing();
+
+      // ==========================================
+      // 4. CARD: Core Game Assets (packed.pak)
+      // ==========================================
+      ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.14f, 0.22f, 0.70f));
+      ImGui::BeginChild("AssetsCard", ImVec2(0, 115.0f * scale), true, ImGuiWindowFlags_None);
+      ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.0f, 1.0f), "📦  %s", launcherText("launcher.assetsSectionTitle", "Game Assets (packed.pak)").utf8Ptr());
+      if (state.canLaunch) {
+        ImGui::TextColored(ImVec4(0.25f, 0.88f, 0.50f, 1.0f), "✔ %s", state.packedPakPath.utf8Ptr());
+      } else {
+        ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.30f, 1.0f), "⚠ %s", launcherText("launcher.notSelectedHint", "Not configured. Select Starbound PC assets/packed.pak").utf8Ptr());
+      }
+
       renderLauncherBusyIndicator(state);
 
       ImGui::BeginDisabled(state.asyncActionRunning);
-      if (ImGui::Button(launcherText("launcher.pickPackedPak", "Pick packed.pak").utf8Ptr())) {
+      if (ImGui::Button(launcherText("launcher.pickPackedPak", "📂 Select / Import packed.pak").utf8Ptr(), ImVec2(-1.0f, 40.0f * scale))) {
 #ifdef STAR_SYSTEM_IOS
         auto svc = m_platformServices->externalFileAccessService();
-        // [this] for launcherText() -- same worker-thread capture pattern as
-        // the mod-import async actions above (translations are immutable
-        // while the launcher runs).
         runLauncherActionAsync("Import packed.pak", [this, svc]() {
           if (svc) {
             auto picked = svc->pickPackedPak();
@@ -3684,7 +3763,6 @@ private:
                 picked
               };
             }
-
             return LauncherActionResult{
               launcherText("status.noFileSelected", "No file selected."),
               launcherText("error.nativePickerUnavailableCanceled", "Native picker unavailable or canceled."),
@@ -3692,7 +3770,6 @@ private:
               {}
             };
           }
-
           return LauncherActionResult{
             launcherText("status.nativePickerUnavailable", "Native picker unavailable."),
             launcherText("error.externalFileAccessUnavailable", "ExternalFileAccessService is unavailable on this platform build."),
@@ -3727,27 +3804,44 @@ private:
 #endif
       }
       ImGui::EndDisabled();
+      ImGui::EndChild();
+      ImGui::PopStyleColor();
 
-      ImGui::Separator();
-      ImGui::TextWrapped("%s: %s", launcherText("launcher.modsDirectoryLabel", "Current mods directory").utf8Ptr(), modsPath.utf8Ptr());
-      if (ImGui::Button(launcherText("launcher.modManager", "Mod Manager").utf8Ptr())) {
+      ImGui::Spacing();
+
+      // ==========================================
+      // 5. CARD: Mods & Saves Management
+      // ==========================================
+      ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.14f, 0.22f, 0.70f));
+      ImGui::BeginChild("ManagerCard", ImVec2(0, 115.0f * scale), true, ImGuiWindowFlags_None);
+      ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.0f, 1.0f), "🧩  %s", launcherText("launcher.managementSectionTitle", "Mods & Save Data").utf8Ptr());
+      ImGui::TextDisabled("%s: %s", launcherText("launcher.modsDirectoryLabel", "Mods Path").utf8Ptr(), modsPath.utf8Ptr());
+
+      if (ImGui::Button(launcherText("launcher.modManager", "📦 Mod Manager").utf8Ptr(), ImVec2(halfW, 40.0f * scale))) {
         state.modManagerOpen = true;
         state.modListDirty = true;
       }
-      sameLineIfNextFits(imguiButtonWidth(launcherText("launcher.saveManager", "Save Manager").utf8Ptr()));
-      if (ImGui::Button(launcherText("launcher.saveManager", "Save Manager").utf8Ptr()))
+      ImGui::SameLine();
+      if (ImGui::Button(launcherText("launcher.saveManager", "💾 Save Backup & Export").utf8Ptr(), ImVec2(halfW, 40.0f * scale))) {
         state.saveManagerOpen = true;
-      sameLineIfNextFits(imguiButtonWidth(launcherText("launcher.uiSettings", "Settings").utf8Ptr()));
-      if (ImGui::Button(launcherText("launcher.uiSettings", "Settings").utf8Ptr()))
-        state.uiSettingsOpen = true;
-      sameLineIfNextFits(imguiButtonWidth(launcherText("launcher.touchControls", "Controls/Overlay").utf8Ptr()));
-      if (ImGui::Button(launcherText("launcher.touchControls", "Controls/Overlay").utf8Ptr())) {
-        state.touchManagerOpen = true;
-        state.gamepadManagerOpen = false;
-        state.selectedTouchElement = std::clamp(state.selectedTouchElement, 0, (int)state.touchElements.size() - 1);
       }
-      sameLineIfNextFits(imguiButtonWidth(launcherText("launcher.exportDiagnostics", "Export Diagnostics").utf8Ptr()));
-      if (ImGui::Button(launcherText("launcher.exportDiagnostics", "Export Diagnostics").utf8Ptr())) {
+      ImGui::EndChild();
+      ImGui::PopStyleColor();
+
+      ImGui::Spacing();
+
+      // ==========================================
+      // 6. CARD: Global Settings & Diagnostics
+      // ==========================================
+      ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.14f, 0.22f, 0.70f));
+      ImGui::BeginChild("SettingsCard", ImVec2(0, 95.0f * scale), true, ImGuiWindowFlags_None);
+      ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.0f, 1.0f), "⚙️  %s", launcherText("launcher.settingsSectionTitle", "Preferences & Display").utf8Ptr());
+
+      if (ImGui::Button(launcherText("launcher.uiSettings", "🖥 Display & Global Settings").utf8Ptr(), ImVec2(halfW, 40.0f * scale))) {
+        state.uiSettingsOpen = true;
+      }
+      ImGui::SameLine();
+      if (ImGui::Button(launcherText("launcher.exportDiagnostics", "📋 Export Logs").utf8Ptr(), ImVec2(halfW, 40.0f * scale))) {
         runLauncherAction("Export diagnostics", [&]() {
           if (auto svc = m_platformServices->externalFileAccessService()) {
             if (svc->exportDiagnostics()) {
@@ -3763,32 +3857,10 @@ private:
           }
         });
       }
+      ImGui::EndChild();
+      ImGui::PopStyleColor();
 
-      ImGui::Separator();
-      ImGui::Text("%s: %s / %s", launcherText("launcher.touchControlsStatusLabel", "Controls").utf8Ptr(),
-        state.touchConfig.enabled ? launcherText("common.touchOn", "touch on").utf8Ptr() : launcherText("common.touchOff", "touch off").utf8Ptr(),
-        state.gamepadConfig.enabled ? launcherText("common.gamepadOn", "gamepad on").utf8Ptr() : launcherText("common.gamepadOff", "gamepad off").utf8Ptr());
-
-      state.canLaunch = File::isFile(state.packedPakPath);
-      if (!state.canLaunch)
-        ImGui::TextColored(ImVec4(1, 0.6f, 0.4f, 1), "%s", launcherText("launcher.launchDisabledHint", "Launch is disabled until packed.pak is imported.").utf8Ptr());
-
-      bool launchDisabled = !state.canLaunch || state.asyncActionRunning;
-      if (launchDisabled)
-        ImGui::BeginDisabled();
-      launchPressed = ImGui::Button(launcherText("launcher.launch", "Launch").utf8Ptr());
-      if (launchDisabled)
-        ImGui::EndDisabled();
-
-      bool quickStartAvailable = !m_activeGamepadName.empty();
-      bool quickStartEnabled = quickStartAvailable && !launchDisabled;
-      if (quickStartAvailable) {
-        int64_t heldMs = m_launcherQuickStartButtonHeld ? Time::monotonicMilliseconds() - m_launcherQuickStartStartMs : 0;
-        renderLauncherQuickStartPrompt((float)heldMs / (float)LauncherQuickStartHoldMs, quickStartEnabled);
-        if (quickStartEnabled && heldMs >= LauncherQuickStartHoldMs)
-          launchPressed = true;
-      }
-
+      ImGui::Spacing();
       renderLauncherStatusText(state);
       ImGui::EndChild();
     }
@@ -4718,8 +4790,11 @@ private:
 
   ImVec2 launcherTouchPosition(float x, float y) const {
     ImVec2 displaySize = imguiDisplaySize();
-    if (x >= 0.0f && x <= 1.0f && y >= 0.0f && y <= 1.0f)
-      return ImVec2(x * displaySize.x, y * displaySize.y);
+    if (x >= -0.1f && x <= 1.1f && y >= -0.1f && y <= 1.1f) {
+      float nx = std::clamp(x, 0.0f, 1.0f);
+      float ny = std::clamp(y, 0.0f, 1.0f);
+      return ImVec2(nx * displaySize.x, ny * displaySize.y);
+    }
     return ImVec2(x, y);
   }
 
@@ -4748,33 +4823,25 @@ private:
 #endif
 
     if (event.type == SDL_EVENT_FINGER_DOWN) {
-      if (!m_launcherTouchActive) {
-        m_launcherTouchActive = true;
-        m_launcherTouchFinger = finger;
-        m_launcherTouchLastPos = pos;
-        m_launcherTouchDragDistance = 0.0f;
-        io.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
-        io.AddMousePosEvent(pos.x, pos.y);
-        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
-      }
+      m_launcherTouchActive = true;
+      m_launcherTouchFinger = finger;
+      m_launcherTouchLastPos = pos;
+      m_launcherTouchDragDistance = 0.0f;
+      m_launcherImGuiClickConsumed = false;
+      io.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
+      io.AddMousePosEvent(pos.x, pos.y);
+      io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
       return true;
     }
 
     if (event.type == SDL_EVENT_FINGER_UP || event.type == SDL_EVENT_FINGER_CANCELED) {
-      // Release on ANY finger-up while a touch is active: some touch drivers
-      // (Switch hid) report a different fingerID on release than on press.
-      // Discarding the mismatched UP wedged this state machine with the ImGui
-      // mouse button held down forever -- the first tap stayed "highlighted"
-      // and every later tap was ignored.
-      if (m_launcherTouchActive) {
-        io.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
-        io.AddMousePosEvent(pos.x, pos.y);
-        if (!m_launcherImGuiClickConsumed)
-          io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
-        m_launcherTouchActive = false;
-        m_launcherTouchFinger = 0;
-        m_launcherTouchDragDistance = 0.0f;
-      }
+      io.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
+      io.AddMousePosEvent(pos.x, pos.y);
+      io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+      m_launcherTouchActive = false;
+      m_launcherTouchFinger = 0;
+      m_launcherTouchDragDistance = 0.0f;
+      m_launcherImGuiClickConsumed = false;
       return true;
     }
 
