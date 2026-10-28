@@ -202,8 +202,8 @@ PerformanceCounterMode perfCounterModeFromName(String const& name, PerformanceCo
 std::vector<MobileTouchElement> defaultTouchElements() {
   return {
     {"joystick", launcherTextStatic("touchElement.joystick", "移动"), MobileTouchElementKind::Joystick, true, {0.14f, 0.72f}, 1.25f, keyAction(Key::Space), {}, {}, {}, {}},
-    {"aimJoystick", launcherTextStatic("touchElement.aimJoystick", "射击"), MobileTouchElementKind::AimJoystick, true, {0.84f, 0.70f}, 1.25f, mouseAction(MouseButton::Left), {}, {}, {}, {}},
-    {"leftHand", launcherTextStatic("touchElement.leftHand", "攻击"), MobileTouchElementKind::Button, true, {0.70f, 0.68f}, 1.15f, mouseAction(MouseButton::Left), {}, {}, {}, {}},
+    {"aimJoystick", launcherTextStatic("touchElement.aimJoystick", "射击"), MobileTouchElementKind::AimJoystick, true, {0.84f, 0.70f}, 1.30f, mouseAction(MouseButton::Left), {}, {}, {}, {}},
+    {"leftHand", launcherTextStatic("touchElement.leftHand", "攻击"), MobileTouchElementKind::Button, false, {0.70f, 0.68f}, 1.15f, mouseAction(MouseButton::Left), {}, {}, {}, {}},
     {"altFire", launcherTextStatic("touchElement.altFire", "副手"), MobileTouchElementKind::Button, true, {0.70f, 0.84f}, 1.05f, mouseAction(MouseButton::Right), {}, {}, {}, {}},
     {"jump", launcherTextStatic("touchElement.jump", "跳跃"), MobileTouchElementKind::Button, true, {0.92f, 0.86f}, 1.10f, keyAction(Key::Space), {}, {}, {}, {}},
     {"interact", launcherTextStatic("touchElement.interact", "E"), MobileTouchElementKind::Button, true, {0.76f, 0.42f}, 1.00f, keyAction(Key::E), {}, {}, {}, {}},
@@ -435,6 +435,40 @@ std::vector<MobileTouchElement> touchElementsFromConfig(Json const& config) {
         elements.push_back(touchElementFromJson(savedElementJson, MobileTouchElement{}));
     }
   }
+
+  // 双轮盘系统强制适配与旧按键迁移：
+  // 查找射击轮盘(aimJoystick)与旧普通攻击按键(leftHand)
+  MobileTouchElement* aimJoy = nullptr;
+  MobileTouchElement* leftHand = nullptr;
+  for (auto& elem : elements) {
+    if (elem.id == "aimJoystick")
+      aimJoy = &elem;
+    else if (elem.id == "leftHand")
+      leftHand = &elem;
+  }
+
+  // 1. 如果旧存档中有 leftHand 攻击按键，但 aimJoystick 未激活或不存在：
+  if (aimJoy) {
+    aimJoy->enabled = true;
+    aimJoy->kind = MobileTouchElementKind::AimJoystick;
+    if (leftHand && leftHand->enabled) {
+      // 继承原有攻击按键的位置与尺寸，完成无缝无痛升级为射击轮盘
+      aimJoy->position = leftHand->position;
+      aimJoy->size = std::max(aimJoy->size, leftHand->size);
+      leftHand->enabled = false;
+    }
+  } else {
+    Vec2F pos = leftHand ? leftHand->position : Vec2F{0.84f, 0.70f};
+    float sz = leftHand ? std::max(1.25f, leftHand->size) : 1.30f;
+    elements.push_back({"aimJoystick", launcherTextStatic("touchElement.aimJoystick", "射击"), MobileTouchElementKind::AimJoystick, true, pos, sz, mouseAction(MouseButton::Left), {}, {}, {}, {}});
+    if (leftHand)
+      leftHand->enabled = false;
+  }
+
+  // 2. 避免普通攻击按键与射击轮盘重叠冲突，主开火由射击轮盘全权负责
+  if (leftHand && aimJoy && (leftHand->position - aimJoy->position).magnitudeSquared() < 0.04f)
+    leftHand->enabled = false;
+
   return elements;
 }
 
@@ -843,7 +877,7 @@ public:
         if (m_joystickActive && m_joystickElementId == element.id) {
           Vec2F delta = m_joystickCurrent - center;
           float mag = delta.magnitude();
-          float maxKnob = elementRadius * 0.60f;
+          float maxKnob = drawRadius * 0.55f;
           if (mag > maxKnob)
             delta = delta / mag * maxKnob;
           knobPos = ip(center + delta);
@@ -869,7 +903,7 @@ public:
         if (m_aimJoystickActive && m_aimJoystickElementId == element.id) {
           Vec2F delta = m_aimJoystickCurrent - center;
           float mag = delta.magnitude();
-          float maxKnob = elementRadius * 0.55f;
+          float maxKnob = drawRadius * 0.55f;
           if (mag > maxKnob)
             delta = delta / mag * maxKnob;
           knobPos = ip(center + delta);
@@ -1254,6 +1288,8 @@ private:
         m_joystickFinger = 0;
         break;
       case FingerRole::AimJoystick:
+        if (tap && m_aimVec.magnitudeSquared() <= m_config.deadzone * m_config.deadzone)
+          emitMouseClick(mouseActionPosition(), MouseButton::Left);
         m_aimJoystickActive = false;
         m_aimJoystickElementId.clear();
         m_aimJoystickFinger = 0;
@@ -1436,7 +1472,7 @@ private:
     setKeyOwner("joystick:up", Key::W, m_moveVec[1] < -0.30f);
     setKeyOwner("joystick:down", Key::S, m_moveVec[1] > 0.30f);
 
-    bool aimFiring = m_aimJoystickActive && (m_aimVec.magnitudeSquared() > (m_config.deadzone * m_config.deadzone * 1.5f));
+    bool aimFiring = m_aimJoystickActive;
     if (auto element = findElement(m_aimJoystickElementId)) {
       if (element->action.kind != MobileTouchActionKind::None)
         setAction(element->action, "aimJoystick:action", aimFiring);

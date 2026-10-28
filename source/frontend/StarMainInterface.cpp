@@ -1548,6 +1548,10 @@ void MainInterface::renderMessages() {
 }
 
 void MainInterface::renderMonsterHealthBar() {
+#if STAR_SYSTEM_ANDROID || STAR_SYSTEM_IOS
+  // 移动端自瞄锁定怪物时，该悬停怪物血条会横跨屏幕正中严重遮挡视野，在移动端予以隐藏
+  return;
+#endif
   auto assets = Root::singleton().assets();
   auto imgMetadata = Root::singleton().imageMetadataDatabase();
   if (m_lastMouseoverTarget != NullEntityId && !m_stickyTargetingTimer.ready()) {
