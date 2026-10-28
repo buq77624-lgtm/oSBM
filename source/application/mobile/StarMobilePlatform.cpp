@@ -916,21 +916,22 @@ private:
 
     float scale = launcherUiScale();
     auto& style = ImGui::GetStyle();
-    style.TouchExtraPadding = ImVec2(12.0f * scale, 12.0f * scale);
-    style.WindowPadding = ImVec2(18.0f * scale, 16.0f * scale);
-    style.FramePadding = ImVec2(16.0f * scale, 12.0f * scale);
-    style.ItemSpacing = ImVec2(14.0f * scale, 12.0f * scale);
-    style.ScrollbarSize = 28.0f * scale;
+    style.TouchExtraPadding = ImVec2(4.0f * scale, 4.0f * scale);
+    style.WindowPadding = ImVec2(14.0f * scale, 12.0f * scale);
+    style.FramePadding = ImVec2(12.0f * scale, 7.0f * scale);
+    style.ItemSpacing = ImVec2(10.0f * scale, 8.0f * scale);
+    style.ScrollbarSize = 18.0f * scale;
 
-    style.WindowRounding = 12.0f * scale;
+    style.WindowRounding = 10.0f * scale;
     style.ChildRounding = 8.0f * scale;
-    style.FrameRounding = 8.0f * scale;
+    style.FrameRounding = 6.0f * scale;
     style.PopupRounding = 8.0f * scale;
-    style.ScrollbarRounding = 10.0f * scale;
-    style.GrabRounding = 6.0f * scale;
-    style.TabRounding = 6.0f * scale;
+    style.ScrollbarRounding = 9.0f * scale;
+    style.GrabRounding = 5.0f * scale;
+    style.TabRounding = 5.0f * scale;
     style.WindowBorderSize = 1.0f;
     style.FrameBorderSize = 0.5f;
+    style.ChildBorderSize = 1.0f;
 
     auto& colors = style.Colors;
     auto const& accent = m_launcherUiConfig.accentColor;
@@ -1808,7 +1809,7 @@ private:
     }
 
     float height = std::max(80.0f, ImGui::GetContentRegionAvail().y - reservedFooterHeight);
-    ImGui::BeginChild(id, ImVec2(0.0f, height), false, ImGuiWindowFlags_NoScrollbar);
+    ImGui::BeginChild(id, ImVec2(0.0f, height), false, ImGuiWindowFlags_None);
   }
 
   // Human-readable name for a single key, reused for macro chips.
@@ -2555,7 +2556,9 @@ private:
     glBlendFuncSeparate(GL_ONE_MINUS_DST_COLOR, GL_ONE_MINUS_SRC_COLOR, GL_ONE, GL_ZERO);
   }
 
-  static void drawPreviewLabelWithOutline(ImDrawList* draw, ImVec2 pos, char const* text, ImU32 color, ImU32 outline) {
+  static void drawPreviewLabelWithOutline(ImDrawList* draw, ImVec2 center, char const* text, ImU32 color, ImU32 outline) {
+    ImVec2 textSize = ImGui::CalcTextSize(text);
+    ImVec2 pos(center.x - textSize.x * 0.5f, center.y - textSize.y * 0.5f);
     static ImVec2 const offsets[8] = {
       {-1.0f, -1.0f}, {0.0f, -1.0f}, {1.0f, -1.0f},
       {-1.0f,  0.0f},                {1.0f,  0.0f},
@@ -2575,27 +2578,22 @@ private:
     float radius = baseRadius * std::clamp(element.size, 0.45f, 2.4f);
     ImVec2 center(canvasMin.x + element.position[0] * canvasSize.x, canvasMin.y + element.position[1] * canvasSize.y);
 
-    // Match the in-game overlay: opaque contrast colours (the inversion blend
-    // ignores alpha) with the opacity setting remapped to a contrast strength,
-    // and the configurable outline thickness.
     float op = std::clamp(state.touchConfig.opacity, 0.0f, 1.0f);
-    auto contrast = [op](float c) { return 0.5f + (c - 0.5f) * op; };
-    auto contrastColor = [&contrast](float r, float g, float b) {
-      return IM_COL32((int)std::lround(contrast(r) * 255.0f),
-                      (int)std::lround(contrast(g) * 255.0f),
-                      (int)std::lround(contrast(b) * 255.0f), 255);
-    };
-    ImU32 base = contrastColor(1.0f, 1.0f, 1.0f);
+    float alphaFactor = std::clamp(op * 1.4f + 0.25f, 0.35f, 1.0f);
+    ImU32 base = index == state.selectedTouchElement
+        ? IM_COL32(255, 255, 255, 255)
+        : IM_COL32(186, 230, 253, (int)(245.0f * alphaFactor));
     ImU32 fill = index == state.selectedTouchElement
-        ? contrastColor(0.47f, 0.75f, 1.0f)
-        : contrastColor(0.31f, 0.63f, 1.0f);
-    float thickness = std::max(1.0f, state.touchConfig.outlineThickness);
+        ? IM_COL32(56, 189, 248, (int)(250.0f * alphaFactor))
+        : IM_COL32(14, 165, 233, (int)(210.0f * alphaFactor));
+    float thickness = std::max(2.0f, state.touchConfig.outlineThickness);
+
+    ImU32 discBg = index == state.selectedTouchElement
+        ? IM_COL32(20, 52, 90, (int)(220.0f * alphaFactor))
+        : IM_COL32(12, 20, 34, (int)(180.0f * alphaFactor));
 
     if (element.kind != MobileTouchElementKind::PerformanceCounter) {
-      ImU32 discBg = index == state.selectedTouchElement
-          ? IM_COL32(14, 165, 233, (int)(80.0f * op))
-          : IM_COL32(12, 22, 38, (int)(110.0f * op));
-      draw->AddCircleFilled(center, radius, discBg, 36);
+      draw->AddCircleFilled(center, radius, discBg, 48);
     }
 
     ImGui::SetCursorScreenPos(ImVec2(center.x - radius, center.y - radius));
@@ -2612,25 +2610,32 @@ private:
 
     if (element.kind == MobileTouchElementKind::DPad) {
       float arm = radius * 0.38f;
-      draw->AddRectFilled(ImVec2(center.x - arm, center.y - radius), ImVec2(center.x + arm, center.y + radius), fill, arm * 0.2f);
-      draw->AddRectFilled(ImVec2(center.x - radius, center.y - arm), ImVec2(center.x + radius, center.y + arm), fill, arm * 0.2f);
+      draw->AddRectFilled(ImVec2(center.x - arm, center.y - radius), ImVec2(center.x + arm, center.y + radius), discBg, arm * 0.2f);
+      draw->AddRectFilled(ImVec2(center.x - radius, center.y - arm), ImVec2(center.x + radius, center.y + arm), discBg, arm * 0.2f);
       draw->AddRect(ImVec2(center.x - radius, center.y - radius), ImVec2(center.x + radius, center.y + radius), base, arm * 0.25f, 0, thickness);
-      labels.push_back({ImVec2(center.x - radius * 0.38f, center.y - radius * 0.18f), launcherText("touchElement.dpad", "D-PAD")});
+      labels.push_back({center, launcherText("touchElement.dpad", "D-PAD")});
     } else if (element.kind == MobileTouchElementKind::Joystick || element.kind == MobileTouchElementKind::AimJoystick) {
       draw->AddCircle(center, radius, base, 48, thickness);
-      draw->AddCircleFilled(center, radius * 0.34f, fill, 32);
+      float tickLen = radius * 0.12f;
+      draw->AddLine(ImVec2(center.x, center.y - radius), ImVec2(center.x, center.y - radius + tickLen), base, thickness);
+      draw->AddLine(ImVec2(center.x, center.y + radius), ImVec2(center.x, center.y + radius - tickLen), base, thickness);
+      draw->AddLine(ImVec2(center.x - radius, center.y), ImVec2(center.x - radius + tickLen, center.y), base, thickness);
+      draw->AddLine(ImVec2(center.x + radius, center.y), ImVec2(center.x + radius - tickLen, center.y), base, thickness);
+
+      float knobRadius = radius * 0.38f;
+      draw->AddCircleFilled(center, knobRadius, fill, 32);
+      draw->AddCircle(center, knobRadius, IM_COL32(255, 255, 255, 250), 32, thickness);
+      draw->AddCircleFilled(center, knobRadius * 0.28f, IM_COL32(255, 255, 255, 250), 16);
+      labels.push_back({center, element.label.empty() ? String("Joy") : element.label});
     } else if (element.kind == MobileTouchElementKind::PerformanceCounter) {
-      // No shape at runtime (it's a passive display, not a touch target) --
-      // show representative placeholder text instead, so the preview looks
-      // like what actually renders in-game while positioning it.
       String placeholder = element.perfCounterMode == PerformanceCounterMode::Detailed
           ? String("60 FPS\n60.00Hz\n00512µs\n00048µs")
           : String("60 FPS");
-      labels.push_back({ImVec2(center.x - radius * 0.55f, center.y - radius * 0.4f), placeholder});
+      labels.push_back({center, placeholder});
     } else {
-      draw->AddCircleFilled(center, radius * 0.55f, fill, 32);
       draw->AddCircle(center, radius * 0.55f, base, 48, thickness);
-      labels.push_back({ImVec2(center.x - radius * 0.22f, center.y - radius * 0.18f), element.label});
+      draw->AddCircle(center, radius * 0.46f, IM_COL32(147, 197, 253, 50), 48, 1.0f);
+      labels.push_back({center, element.label});
     }
   }
 
@@ -2642,7 +2647,7 @@ private:
 
     ImDrawList* draw = ImGui::GetWindowDrawList();
     ImVec2 min = ImGui::GetWindowPos();
-    draw->AddRectFilled(min, ImVec2(min.x + displaySize.x, min.y + displaySize.y), IM_COL32(15, 18, 24, 235));
+    draw->AddRectFilled(min, ImVec2(min.x + displaySize.x, min.y + displaySize.y), IM_COL32(11, 15, 22, 240));
 
     ImGui::SetCursorScreenPos(ImVec2(min.x + 16.0f, min.y + 16.0f));
     auto const& style = ImGui::GetStyle();
@@ -2653,19 +2658,21 @@ private:
         + ImGui::GetFrameHeightWithSpacing()
         + ImGui::GetFrameHeight()
         + (selectedIsPerfCounter ? ImGui::GetFrameHeightWithSpacing() : 0.0f);
-    ImGui::BeginChild("TouchPreviewToolbar", ImVec2(std::min(520.0f, displaySize.x - 32.0f), toolbarHeight), true);
-    ImGui::TextUnformatted(launcherText("touchPreview.title", "Touch Layout Preview").utf8Ptr());
+    ImGui::BeginChild("TouchPreviewToolbar", ImVec2(std::min(560.0f, displaySize.x - 32.0f), toolbarHeight), true);
+    ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.0f, 1.0f), "【 按键布局可视化拖动排版 】");
     if (state.selectedTouchElement >= 0 && state.selectedTouchElement < (int)state.touchElements.size()) {
       auto& selected = state.touchElements[state.selectedTouchElement];
       ImGui::Text("%s: %s", launcherText("touchPreview.selectedLabel", "Selected").utf8Ptr(), selected.label.utf8Ptr());
-      ImGui::SliderFloat(launcherText("touchPreview.selectedSize", "Selected size").utf8Ptr(), &selected.size, 0.45f, 2.4f);
+      ImGui::SliderFloat(launcherText("touchPreview.selectedSize", "Selected size").utf8Ptr(), &selected.size, 0.45f, 2.4f, "%.2f x");
+      if (selected.id.beginsWith("custom")) {
+        ImGui::SameLine();
+        if (ImGui::Button(launcherText("touchManager.deleteButton", "Delete").utf8Ptr())) {
+          state.touchElements.erase(state.touchElements.begin() + state.selectedTouchElement);
+          state.selectedTouchElement = -1;
+        }
+      }
       if (selected.kind == MobileTouchElementKind::PerformanceCounter) {
         bool detailed = selected.perfCounterMode == PerformanceCounterMode::Detailed;
-        // Store as String, not char const*: .utf8Ptr() on a launcherText()
-        // temporary dangles the instant the initializer statement ends, since
-        // the String owning that buffer is destroyed right there -- BeginCombo
-        // below would read freed memory (this was the "dropdown shows its own
-        // label instead of the selected value" bug).
         String modeLabel = detailed
             ? launcherText("touchManager.perfCounterModeDetailed", "Detailed")
             : launcherText("touchManager.perfCounterModeFps", "FPS");
@@ -2685,23 +2692,18 @@ private:
         }
       }
     }
-    if (ImGui::Button(launcherText("common.done", "Done").utf8Ptr()))
+    if (ImGui::Button(launcherText("common.done", "Done").utf8Ptr(), ImVec2(120.0f, 0.0f)))
       state.touchPreviewOpen = false;
     ImGui::EndChild();
 
-    // Register control drag hitboxes after the toolbar so overlapping controls
-    // can always be pulled out from underneath it. Shapes are drawn with the
-    // same always-visible inversion blend as the in-game overlay; labels are
-    // drawn afterwards under the default blend with a contrast outline.
     std::vector<PreviewLabel> labels;
-    draw->AddCallback(applyTouchPreviewContrastBlend, nullptr);
     for (int i = 0; i < (int)state.touchElements.size(); ++i)
       renderTouchElementPreview(state, draw, min, displaySize, i, labels);
-    draw->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
 
     float op = std::clamp(state.touchConfig.opacity, 0.0f, 1.0f);
-    ImU32 labelColor = IM_COL32(255, 255, 255, (int)(230.0f * op));
-    ImU32 labelOutline = IM_COL32(0, 0, 0, (int)(210.0f * op));
+    float alphaFactor = std::clamp(op * 1.4f + 0.25f, 0.35f, 1.0f);
+    ImU32 labelColor = IM_COL32(255, 255, 255, (int)(255.0f * alphaFactor));
+    ImU32 labelOutline = IM_COL32(0, 0, 0, (int)(230.0f * alphaFactor));
     for (auto const& label : labels)
       drawPreviewLabelWithOutline(draw, label.pos, label.text.utf8Ptr(), labelColor, labelOutline);
 
@@ -2860,29 +2862,46 @@ private:
     if (!gyroAvailable)
       state.touchConfig.gyroEnabled = false;
 
+    float scale = launcherUiScale();
+    ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.0f, 1.0f), "STARBOUND MOBILE");
+    ImGui::SameLine();
+    ImGui::TextUnformatted(" | ");
+    ImGui::SameLine();
     ImGui::TextUnformatted(launcherText("touchManager.title", "Controls/Overlay").utf8Ptr());
     ImGui::Separator();
 
     beginLauncherScrollArea("TouchManagerScroll", state);
-    if (ImGui::Button(launcherText("common.backToLauncher", "Back to Launcher").utf8Ptr()))
+
+    if (ImGui::Button(launcherText("common.backToLauncher", "< Back to Launcher").utf8Ptr(), ImVec2(150.0f * scale, 36.0f * scale)))
       state.touchManagerOpen = false;
-    sameLineIfNextFits(imguiButtonWidth(launcherText("gamepadManager.open", "Gamepad Controls").utf8Ptr()));
-    if (ImGui::Button(launcherText("gamepadManager.open", "Gamepad Controls").utf8Ptr()))
+    sameLineIfNextFits(150.0f * scale);
+    if (ImGui::Button(launcherText("gamepadManager.open", "Gamepad Controls").utf8Ptr(), ImVec2(150.0f * scale, 36.0f * scale)))
       state.gamepadManagerOpen = true;
-    sameLineIfNextFits(imguiButtonWidth(launcherText("touchManager.previewAdjust", "Preview / Adjust Layout").utf8Ptr()));
-    if (ImGui::Button(launcherText("touchManager.previewAdjust", "Preview / Adjust Layout").utf8Ptr()))
+    sameLineIfNextFits(200.0f * scale);
+    if (ImGui::Button(launcherText("touchManager.previewAdjust", "Edit Layout on Screen").utf8Ptr(), ImVec2(200.0f * scale, 36.0f * scale)))
       state.touchPreviewOpen = true;
-    sameLineIfNextFits(imguiButtonWidth(launcherText("common.save", "Save").utf8Ptr()));
-    if (ImGui::Button(launcherText("common.save", "Save").utf8Ptr()))
+    sameLineIfNextFits(120.0f * scale);
+    if (ImGui::Button(launcherText("common.save", "Save Config").utf8Ptr(), ImVec2(120.0f * scale, 36.0f * scale)))
       persistLauncherState(state);
 
-    ImGui::TextUnformatted(launcherText("touchManager.touchSection", "Controls").utf8Ptr());
+    ImGui::Spacing();
+
+    // ==========================================
+    // Card 1: Core Touch & Screen Gestures
+    // ==========================================
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.09f, 0.13f, 0.20f, 0.75f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.20f, 0.32f, 0.48f, 0.60f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f * scale, 12.0f * scale));
+    ImGui::BeginChild("TouchCoreCard", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
+
+    ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.0f, 1.0f), "[ 1 ] %s", launcherText("touchManager.touchSection", "Touch & Gesture Core").utf8Ptr());
+    ImGui::Separator();
+
     ImGui::Checkbox(launcherText("touchManager.enableOverlay", "Enable touch overlay").utf8Ptr(), &state.touchConfig.enabled);
     ImGui::Checkbox(launcherText("touchManager.enableDirectGestures", "Enable direct screen touch gestures").utf8Ptr(), &state.touchConfig.directTouchGestures);
     if (state.touchConfig.directTouchGestures) {
       bool touchpad = state.touchConfig.directTouchGestureMode == DirectTouchGestureMode::Touchpad;
-      // Store as String, not char const*: .utf8Ptr() on a launcherText()
-      // temporary dangles the instant this initializer statement ends.
       String modeLabel = touchpad
           ? launcherText("touchManager.gestureModeTouchpad", "Touchpad")
           : launcherText("touchManager.gestureModeTouchscreen", "Touchscreen");
@@ -2914,6 +2933,7 @@ private:
     ImGui::Checkbox(launcherText("touchManager.joystickAimCursor", "Enable joystick aim cursor").utf8Ptr(), &state.touchConfig.joystickAimCursorEnabled);
     ImGui::TextDisabled("%s", launcherText("touchManager.joystickAimCursorHint",
         "Shows the aim cursor while aiming with a joystick, from the touch-screen aim joystick or a physical controller.").utf8Ptr());
+
     ImGui::BeginDisabled(!gyroAvailable);
     ImGui::Checkbox(launcherText("touchManager.enableGyroAim", "Enable gyro aim").utf8Ptr(), &state.touchConfig.gyroEnabled);
     ImGui::EndDisabled();
@@ -2921,17 +2941,66 @@ private:
       ImGui::SameLine();
       ImGui::TextDisabled("%s", launcherText("touchManager.noGyroFound", "No gyro found").utf8Ptr());
     }
-    ImGui::SliderFloat(launcherText("touchManager.overlayOpacity", "Overlay opacity").utf8Ptr(), &state.touchConfig.opacity, 0.0f, 1.0f);
-    ImGui::SliderFloat(launcherText("touchManager.globalControlSize", "Global control size").utf8Ptr(), &state.touchConfig.size, 0.6f, 1.8f);
-    ImGui::SliderFloat(launcherText("touchManager.outlineThickness", "Button outline thickness").utf8Ptr(), &state.touchConfig.outlineThickness, 1.0f, 5.0f);
-    ImGui::SliderFloat(launcherText("touchManager.joystickDeadzone", "Joystick deadzone").utf8Ptr(), &state.touchConfig.deadzone, 0.0f, 0.6f);
-    ImGui::BeginDisabled(!gyroAvailable);
-    ImGui::SliderFloat(launcherText("touchManager.gyroSensitivity", "Gyro sensitivity").utf8Ptr(), &state.touchConfig.gyroSensitivity, 0.10f, 12.0f);
-    ImGui::Checkbox(launcherText("touchManager.invertGyroX", "Invert gyro X axis").utf8Ptr(), &state.touchConfig.gyroInvertX);
-    ImGui::Checkbox(launcherText("touchManager.invertGyroY", "Invert gyro Y axis").utf8Ptr(), &state.touchConfig.gyroInvertY);
-    ImGui::EndDisabled();
 
-    if (ImGui::Button(launcherText("touchManager.newButton", "New Button").utf8Ptr())) {
+    ImGui::EndChild();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(2);
+
+    ImGui::Spacing();
+
+    // ==========================================
+    // Card 2: Visual Style & Sensitivity
+    // ==========================================
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.09f, 0.13f, 0.20f, 0.75f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.20f, 0.32f, 0.48f, 0.60f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f * scale, 12.0f * scale));
+    ImGui::BeginChild("TouchVisualCard", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
+
+    ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.0f, 1.0f), "[ 2 ] %s", launcherText("touchManager.visualSection", "Visual Appearance & Sensitivity").utf8Ptr());
+    ImGui::Separator();
+
+    float opPct = state.touchConfig.opacity * 100.0f;
+    if (ImGui::SliderFloat(launcherText("touchManager.overlayOpacity", "Overlay opacity").utf8Ptr(), &opPct, 10.0f, 100.0f, "%.0f %%"))
+      state.touchConfig.opacity = std::clamp(opPct / 100.0f, 0.10f, 1.0f);
+
+    ImGui::SliderFloat(launcherText("touchManager.globalControlSize", "Global control size").utf8Ptr(), &state.touchConfig.size, 0.6f, 1.8f, "%.2f x");
+    ImGui::SliderFloat(launcherText("touchManager.outlineThickness", "Button outline thickness").utf8Ptr(), &state.touchConfig.outlineThickness, 1.0f, 5.0f, "%.1f px");
+
+    float deadzonePct = state.touchConfig.deadzone * 100.0f;
+    if (ImGui::SliderFloat(launcherText("touchManager.joystickDeadzone", "Joystick deadzone").utf8Ptr(), &deadzonePct, 0.0f, 50.0f, "%.0f %%"))
+      state.touchConfig.deadzone = std::clamp(deadzonePct / 100.0f, 0.0f, 0.50f);
+
+    if (gyroAvailable) {
+      ImGui::SliderFloat(launcherText("touchManager.gyroSensitivity", "Gyro sensitivity").utf8Ptr(), &state.touchConfig.gyroSensitivity, 0.10f, 12.0f, "%.1f x");
+      ImGui::Checkbox(launcherText("touchManager.invertGyroX", "Invert gyro X axis").utf8Ptr(), &state.touchConfig.gyroInvertX);
+      ImGui::SameLine();
+      ImGui::Checkbox(launcherText("touchManager.invertGyroY", "Invert gyro Y axis").utf8Ptr(), &state.touchConfig.gyroInvertY);
+    }
+
+    ImGui::EndChild();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(2);
+
+    ImGui::Spacing();
+
+    // ==========================================
+    // Card 3: Button Customization & List
+    // ==========================================
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.09f, 0.13f, 0.20f, 0.75f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.20f, 0.32f, 0.48f, 0.60f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f * scale, 12.0f * scale));
+    ImGui::BeginChild("TouchButtonsCard", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
+
+    ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.0f, 1.0f), "[ 3 ] %s", launcherText("touchManager.layoutSection", "Touch Button Layout & Mapping").utf8Ptr());
+    ImGui::Separator();
+
+    if (ImGui::Button(launcherText("touchManager.openVisualEditor", "Customize Button Layout on Screen (Drag & Resize)").utf8Ptr(), ImVec2(-1.0f, 40.0f * scale))) {
+      state.touchPreviewOpen = true;
+    }
+
+    if (ImGui::Button(launcherText("touchManager.newButton", "+ New Custom Button").utf8Ptr(), ImVec2(-1.0f, 36.0f * scale))) {
       state.newTouchButtonPopup = true;
       state.newTouchActionIndex = 0;
       state.newTouchButtonSize = 1.0f;
@@ -2952,7 +3021,7 @@ private:
         }
         ImGui::EndCombo();
       }
-      ImGui::SliderFloat(launcherText("touchManager.buttonSize", "Button size").utf8Ptr(), &state.newTouchButtonSize, 0.45f, 2.4f);
+      ImGui::SliderFloat(launcherText("touchManager.buttonSize", "Button size").utf8Ptr(), &state.newTouchButtonSize, 0.45f, 2.4f, "%.2f x");
       if (ImGui::Button(launcherText("common.create", "Create").utf8Ptr(), ImVec2(140.0f, 0.0f))) {
         auto action = choices[state.newTouchActionIndex].second;
         MobileTouchElement element;
@@ -2974,78 +3043,84 @@ private:
       ImGui::EndPopup();
     }
 
-    ImGui::Separator();
-    float listHeight = std::max(240.0f, ImGui::GetContentRegionAvail().y - ImGui::GetStyle().ItemSpacing.y);
-    if (ImGui::BeginChild("TouchControlList", ImVec2(0.0f, listHeight), true, ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
-      for (int i = 0; i < (int)state.touchElements.size(); ++i) {
-        auto& element = state.touchElements[i];
-        ImGui::PushID(element.id.utf8Ptr());
-        ImGui::Checkbox("##enabled", &element.enabled);
-        ImGui::SameLine();
-        bool selected = state.selectedTouchElement == i;
-        String listLabel = element.label.empty() ? launcherText("touchManager.blankLabel", "(blank)") : element.label;
-        if (ImGui::Selectable(listLabel.utf8Ptr(), selected, ImGuiSelectableFlags_AllowItemOverlap))
-          state.selectedTouchElement = i;
-        if (selected) {
-          ImGui::Indent();
-          if (state.touchLabelBufferElementId != element.id) {
-            state.touchLabelBufferElementId = element.id;
-            std::snprintf(state.touchLabelBuffer, sizeof(state.touchLabelBuffer), "%s", element.label.utf8Ptr());
-          }
-          if (element.kind == MobileTouchElementKind::Button) {
-            if (ImGui::InputText(launcherText("touchManager.displayedText", "Displayed text").utf8Ptr(), state.touchLabelBuffer, sizeof(state.touchLabelBuffer)))
-              element.label = String(state.touchLabelBuffer).trim();
-          }
-          ImGui::SliderFloat(launcherText("touchManager.elementSize", "Size").utf8Ptr(), &element.size, 0.45f, 2.4f);
-          float position[2] = {element.position[0], element.position[1]};
-          if (ImGui::SliderFloat2(launcherText("touchManager.position", "Position").utf8Ptr(), position, 0.03f, 0.97f))
-            element.position = {position[0], position[1]};
-          if (element.kind == MobileTouchElementKind::Button) {
-            renderTouchActionCombo(state, launcherText("touchManager.interaction", "Interaction").utf8Ptr(), element.action, element.id + ":action");
-            renderTouchPressModeCombo(element);
-          }
-          else if (element.kind == MobileTouchElementKind::DPad) {
-            renderTouchActionCombo(state, launcherText("touchManager.directionUp", "Up").utf8Ptr(), element.upAction, element.id + ":up");
-            renderTouchActionCombo(state, launcherText("touchManager.directionDown", "Down").utf8Ptr(), element.downAction, element.id + ":down");
-            renderTouchActionCombo(state, launcherText("touchManager.directionLeft", "Left").utf8Ptr(), element.leftAction, element.id + ":left");
-            renderTouchActionCombo(state, launcherText("touchManager.directionRight", "Right").utf8Ptr(), element.rightAction, element.id + ":right");
-          } else if (element.kind == MobileTouchElementKind::AimJoystick) {
-            ImGui::Checkbox(launcherText("touchManager.preciseAim", "Precise aim").utf8Ptr(), &element.preciseAim);
-            ImGui::SliderFloat(launcherText("touchManager.aimSensitivity", "Aim sensitivity").utf8Ptr(), &element.aimSensitivity, 0.25f, 4.0f);
-            if (element.preciseAim)
-              ImGui::TextDisabled("%s", launcherText("touchManager.preciseAimHint", "Precise aim moves the virtual cursor.").utf8Ptr());
-            else
-              ImGui::TextDisabled("%s", launcherText("touchManager.directionalAimHint", "Directional aim points around the player.").utf8Ptr());
-          } else if (element.kind == MobileTouchElementKind::PerformanceCounter) {
-            bool detailed = element.perfCounterMode == PerformanceCounterMode::Detailed;
-            // Store as String, not char const*: .utf8Ptr() on a launcherText()
-            // temporary dangles the instant this initializer statement ends.
-            String modeLabel = detailed
-                ? launcherText("touchManager.perfCounterModeDetailed", "Detailed")
-                : launcherText("touchManager.perfCounterModeFps", "FPS");
-            if (ImGui::BeginCombo(launcherText("touchManager.perfCounterMode", "Display mode").utf8Ptr(), modeLabel.utf8Ptr())) {
-              for (int i = 0; i < 2; ++i) {
-                bool isDetailed = i == 1;
-                bool itemSelected = detailed == isDetailed;
-                String label = isDetailed
-                    ? launcherText("touchManager.perfCounterModeDetailed", "Detailed")
-                    : launcherText("touchManager.perfCounterModeFps", "FPS");
-                if (ImGui::Selectable(label.utf8Ptr(), itemSelected))
-                  element.perfCounterMode = isDetailed ? PerformanceCounterMode::Detailed : PerformanceCounterMode::Fps;
-                if (itemSelected)
-                  ImGui::SetItemDefaultFocus();
-              }
-              ImGui::EndCombo();
-            }
-          } else {
-            ImGui::TextDisabled("%s", launcherText("touchManager.joystickHint", "Joystick sends movement keys.").utf8Ptr());
-          }
-          ImGui::Unindent();
+    ImGui::Spacing();
+    ImGui::TextDisabled("%s", launcherText("touchManager.selectToEditHint", "Select a button below to inspect or reconfigure:").utf8Ptr());
+
+    for (int i = 0; i < (int)state.touchElements.size(); ++i) {
+      auto& element = state.touchElements[i];
+      ImGui::PushID(element.id.utf8Ptr());
+      ImGui::Checkbox("##enabled", &element.enabled);
+      ImGui::SameLine();
+      bool selected = state.selectedTouchElement == i;
+      String listLabel = element.label.empty() ? launcherText("touchManager.blankLabel", "(blank)") : element.label;
+      String displayLine = strf("[{}] {}", element.kind == MobileTouchElementKind::Joystick ? "Joy" : (element.kind == MobileTouchElementKind::AimJoystick ? "Aim" : "Btn"), listLabel);
+      if (ImGui::Selectable(displayLine.utf8Ptr(), selected, ImGuiSelectableFlags_AllowItemOverlap))
+        state.selectedTouchElement = i;
+      if (selected) {
+        ImGui::Indent();
+        if (state.touchLabelBufferElementId != element.id) {
+          state.touchLabelBufferElementId = element.id;
+          std::snprintf(state.touchLabelBuffer, sizeof(state.touchLabelBuffer), "%s", element.label.utf8Ptr());
         }
-        ImGui::PopID();
+        if (element.kind == MobileTouchElementKind::Button) {
+          if (ImGui::InputText(launcherText("touchManager.displayedText", "Displayed text").utf8Ptr(), state.touchLabelBuffer, sizeof(state.touchLabelBuffer)))
+            element.label = String(state.touchLabelBuffer).trim();
+        }
+        ImGui::SliderFloat(launcherText("touchManager.elementSize", "Size").utf8Ptr(), &element.size, 0.45f, 2.4f, "%.2f x");
+        float posPct[2] = {element.position[0] * 100.0f, element.position[1] * 100.0f};
+        if (ImGui::SliderFloat2(launcherText("touchManager.position", "Position (X / Y)").utf8Ptr(), posPct, 3.0f, 97.0f, "%.0f %%"))
+          element.position = {posPct[0] / 100.0f, posPct[1] / 100.0f};
+
+        if (element.kind == MobileTouchElementKind::Button) {
+          renderTouchActionCombo(state, launcherText("touchManager.interaction", "Interaction").utf8Ptr(), element.action, element.id + ":action");
+          renderTouchPressModeCombo(element);
+        } else if (element.kind == MobileTouchElementKind::DPad) {
+          renderTouchActionCombo(state, launcherText("touchManager.directionUp", "Up").utf8Ptr(), element.upAction, element.id + ":up");
+          renderTouchActionCombo(state, launcherText("touchManager.directionDown", "Down").utf8Ptr(), element.downAction, element.id + ":down");
+          renderTouchActionCombo(state, launcherText("touchManager.directionLeft", "Left").utf8Ptr(), element.leftAction, element.id + ":left");
+          renderTouchActionCombo(state, launcherText("touchManager.directionRight", "Right").utf8Ptr(), element.rightAction, element.id + ":right");
+        } else if (element.kind == MobileTouchElementKind::AimJoystick) {
+          ImGui::Checkbox(launcherText("touchManager.preciseAim", "Precise aim").utf8Ptr(), &element.preciseAim);
+          ImGui::SliderFloat(launcherText("touchManager.aimSensitivity", "Aim sensitivity").utf8Ptr(), &element.aimSensitivity, 0.25f, 4.0f, "%.2f x");
+        } else if (element.kind == MobileTouchElementKind::PerformanceCounter) {
+          bool detailed = element.perfCounterMode == PerformanceCounterMode::Detailed;
+          String modeLabel = detailed
+              ? launcherText("touchManager.perfCounterModeDetailed", "Detailed")
+              : launcherText("touchManager.perfCounterModeFps", "FPS");
+          if (ImGui::BeginCombo(launcherText("touchManager.perfCounterMode", "Display mode").utf8Ptr(), modeLabel.utf8Ptr())) {
+            for (int d = 0; d < 2; ++d) {
+              bool isDetailed = d == 1;
+              bool itemSelected = detailed == isDetailed;
+              String label = isDetailed
+                  ? launcherText("touchManager.perfCounterModeDetailed", "Detailed")
+                  : launcherText("touchManager.perfCounterModeFps", "FPS");
+              if (ImGui::Selectable(label.utf8Ptr(), itemSelected))
+                element.perfCounterMode = isDetailed ? PerformanceCounterMode::Detailed : PerformanceCounterMode::Fps;
+              if (itemSelected)
+                ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+          }
+        }
+
+        if (element.id.beginsWith("custom")) {
+          if (ImGui::Button(launcherText("touchManager.deleteButton", "Delete Custom Button").utf8Ptr())) {
+            state.touchElements.erase(state.touchElements.begin() + i);
+            state.selectedTouchElement = -1;
+            ImGui::Unindent();
+            ImGui::PopID();
+            break;
+          }
+        }
+        ImGui::Unindent();
       }
+      ImGui::PopID();
     }
+
     ImGui::EndChild();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(2);
+
     ImGui::EndChild();
   }
 
@@ -3663,9 +3738,9 @@ private:
       ImGui::TextDisabled("v1.1.0");
       ImGui::SameLine();
       if (state.canLaunch) {
-        ImGui::TextColored(ImVec4(0.18f, 0.88f, 0.45f, 1.0f), "[ ✔ %s ]", launcherText("launcher.readyStatus", "Assets Ready").utf8Ptr());
+        ImGui::TextColored(ImVec4(0.18f, 0.88f, 0.45f, 1.0f), "[ OK ] %s", launcherText("launcher.readyStatus", "Assets Ready").utf8Ptr());
       } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.25f, 1.0f), "[ ⚠ %s ]", launcherText("launcher.needsAssets", "packed.pak Needed").utf8Ptr());
+        ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.25f, 1.0f), "[ ! ] %s", launcherText("launcher.needsAssets", "packed.pak Needed").utf8Ptr());
       }
 
       ImGui::Spacing();
@@ -3684,9 +3759,9 @@ private:
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.22f, 0.26f, 0.32f, 1.0f));
       }
 
-      ImVec2 launchBtnSize = ImVec2(-1.0f, std::max(48.0f, 52.0f * scale));
-      if (ImGui::Button(state.canLaunch ? launcherText("launcher.heroLaunchReady", "▶  START STARBOUND (Launch Game)").utf8Ptr()
-                                       : launcherText("launcher.heroLaunchNeedsPak", "⚠  Please Select packed.pak First").utf8Ptr(), launchBtnSize)) {
+      ImVec2 launchBtnSize = ImVec2(-1.0f, std::max(48.0f, 54.0f * scale));
+      if (ImGui::Button(state.canLaunch ? launcherText("launcher.heroLaunchReady", "START STARBOUND (Launch Game)").utf8Ptr()
+                                       : launcherText("launcher.heroLaunchNeedsPak", "Please Select packed.pak First").utf8Ptr(), launchBtnSize)) {
         if (state.canLaunch && !state.asyncActionRunning) {
           launchPressed = true;
         } else if (!state.canLaunch) {
@@ -3708,48 +3783,55 @@ private:
       ImGui::Separator();
       ImGui::Spacing();
 
-      float halfW = (ImGui::GetContentRegionAvail().x - 12.0f * scale) * 0.5f;
+      float halfW = (ImGui::GetContentRegionAvail().x - 10.0f * scale) * 0.5f;
 
       // ==========================================
       // 3. CARD: Touch Controls & Layout Editor
       // ==========================================
-      ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.14f, 0.22f, 0.70f));
-      ImGui::BeginChild("TouchCard", ImVec2(0, 115.0f * scale), true, ImGuiWindowFlags_None);
-      ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.0f, 1.0f), "🎮  %s", launcherText("launcher.touchSectionTitle", "Touch Controls & HUD Layout").utf8Ptr());
+      ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.09f, 0.13f, 0.20f, 0.75f));
+      ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.20f, 0.32f, 0.48f, 0.60f));
+      ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
+      ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f * scale, 12.0f * scale));
+      ImGui::BeginChild("TouchCard", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_None);
+      ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.0f, 1.0f), "[ 触控与按键配置 ]  %s", launcherText("launcher.touchSectionTitle", "Touch Controls & HUD Layout").utf8Ptr());
       ImGui::TextDisabled("%s: %s | %s", launcherText("launcher.touchModeActive", "Ergonomic Skill Cluster").utf8Ptr(),
         state.touchConfig.enabled ? launcherText("common.touchOn", "Touch On").utf8Ptr() : launcherText("common.touchOff", "Touch Off").utf8Ptr(),
         state.gamepadConfig.enabled ? launcherText("common.gamepadOn", "Gamepad On").utf8Ptr() : launcherText("common.gamepadOff", "Gamepad Off").utf8Ptr());
 
-      if (ImGui::Button(launcherText("touchManager.previewAdjust", "🎨 Customize Button Layout (Drag & Resize)").utf8Ptr(), ImVec2(halfW, 40.0f * scale))) {
+      if (ImGui::Button(launcherText("touchManager.previewAdjust", "Edit Layout on Screen (Drag & Resize)").utf8Ptr(), ImVec2(halfW, 42.0f * scale))) {
         state.touchPreviewOpen = true;
       }
       ImGui::SameLine();
-      if (ImGui::Button(launcherText("launcher.touchControls", "⚙ Touch & Gyro Settings").utf8Ptr(), ImVec2(halfW, 40.0f * scale))) {
+      if (ImGui::Button(launcherText("launcher.touchControls", "Touch & Gyro Settings").utf8Ptr(), ImVec2(halfW, 42.0f * scale))) {
         state.touchManagerOpen = true;
         state.gamepadManagerOpen = false;
         state.selectedTouchElement = std::clamp(state.selectedTouchElement, 0, (int)state.touchElements.size() - 1);
       }
       ImGui::EndChild();
-      ImGui::PopStyleColor();
+      ImGui::PopStyleVar(2);
+      ImGui::PopStyleColor(2);
 
       ImGui::Spacing();
 
       // ==========================================
       // 4. CARD: Core Game Assets (packed.pak)
       // ==========================================
-      ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.14f, 0.22f, 0.70f));
-      ImGui::BeginChild("AssetsCard", ImVec2(0, 115.0f * scale), true, ImGuiWindowFlags_None);
-      ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.0f, 1.0f), "📦  %s", launcherText("launcher.assetsSectionTitle", "Game Assets (packed.pak)").utf8Ptr());
+      ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.09f, 0.13f, 0.20f, 0.75f));
+      ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.20f, 0.32f, 0.48f, 0.60f));
+      ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
+      ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f * scale, 12.0f * scale));
+      ImGui::BeginChild("AssetsCard", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_None);
+      ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.0f, 1.0f), "[ 核心资源 ]  %s", launcherText("launcher.assetsSectionTitle", "Game Assets (packed.pak)").utf8Ptr());
       if (state.canLaunch) {
-        ImGui::TextColored(ImVec4(0.25f, 0.88f, 0.50f, 1.0f), "✔ %s", state.packedPakPath.utf8Ptr());
+        ImGui::TextColored(ImVec4(0.25f, 0.88f, 0.50f, 1.0f), "[ OK ] %s", state.packedPakPath.utf8Ptr());
       } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.30f, 1.0f), "⚠ %s", launcherText("launcher.notSelectedHint", "Not configured. Select Starbound PC assets/packed.pak").utf8Ptr());
+        ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.30f, 1.0f), "[ ! ] %s", launcherText("launcher.notSelectedHint", "Not configured. Select Starbound PC assets/packed.pak").utf8Ptr());
       }
 
       renderLauncherBusyIndicator(state);
 
       ImGui::BeginDisabled(state.asyncActionRunning);
-      if (ImGui::Button(launcherText("launcher.pickPackedPak", "📂 Select / Import packed.pak").utf8Ptr(), ImVec2(-1.0f, 40.0f * scale))) {
+      if (ImGui::Button(launcherText("launcher.pickPackedPak", "Select / Import packed.pak").utf8Ptr(), ImVec2(-1.0f, 42.0f * scale))) {
 #ifdef STAR_SYSTEM_IOS
         auto svc = m_platformServices->externalFileAccessService();
         runLauncherActionAsync("Import packed.pak", [this, svc]() {
@@ -3805,43 +3887,51 @@ private:
       }
       ImGui::EndDisabled();
       ImGui::EndChild();
-      ImGui::PopStyleColor();
+      ImGui::PopStyleVar(2);
+      ImGui::PopStyleColor(2);
 
       ImGui::Spacing();
 
       // ==========================================
       // 5. CARD: Mods & Saves Management
       // ==========================================
-      ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.14f, 0.22f, 0.70f));
-      ImGui::BeginChild("ManagerCard", ImVec2(0, 115.0f * scale), true, ImGuiWindowFlags_None);
-      ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.0f, 1.0f), "🧩  %s", launcherText("launcher.managementSectionTitle", "Mods & Save Data").utf8Ptr());
+      ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.09f, 0.13f, 0.20f, 0.75f));
+      ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.20f, 0.32f, 0.48f, 0.60f));
+      ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
+      ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f * scale, 12.0f * scale));
+      ImGui::BeginChild("ManagerCard", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_None);
+      ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.0f, 1.0f), "[ 模组与存档 ]  %s", launcherText("launcher.managementSectionTitle", "Mods & Save Data").utf8Ptr());
       ImGui::TextDisabled("%s: %s", launcherText("launcher.modsDirectoryLabel", "Mods Path").utf8Ptr(), modsPath.utf8Ptr());
 
-      if (ImGui::Button(launcherText("launcher.modManager", "📦 Mod Manager").utf8Ptr(), ImVec2(halfW, 40.0f * scale))) {
+      if (ImGui::Button(launcherText("launcher.modManager", "Mod Manager").utf8Ptr(), ImVec2(halfW, 42.0f * scale))) {
         state.modManagerOpen = true;
         state.modListDirty = true;
       }
       ImGui::SameLine();
-      if (ImGui::Button(launcherText("launcher.saveManager", "💾 Save Backup & Export").utf8Ptr(), ImVec2(halfW, 40.0f * scale))) {
+      if (ImGui::Button(launcherText("launcher.saveManager", "Save Backup & Export").utf8Ptr(), ImVec2(halfW, 42.0f * scale))) {
         state.saveManagerOpen = true;
       }
       ImGui::EndChild();
-      ImGui::PopStyleColor();
+      ImGui::PopStyleVar(2);
+      ImGui::PopStyleColor(2);
 
       ImGui::Spacing();
 
       // ==========================================
       // 6. CARD: Global Settings & Diagnostics
       // ==========================================
-      ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.14f, 0.22f, 0.70f));
-      ImGui::BeginChild("SettingsCard", ImVec2(0, 95.0f * scale), true, ImGuiWindowFlags_None);
-      ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.0f, 1.0f), "⚙️  %s", launcherText("launcher.settingsSectionTitle", "Preferences & Display").utf8Ptr());
+      ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.09f, 0.13f, 0.20f, 0.75f));
+      ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.20f, 0.32f, 0.48f, 0.60f));
+      ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
+      ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f * scale, 12.0f * scale));
+      ImGui::BeginChild("SettingsCard", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_None);
+      ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.0f, 1.0f), "[ 全局设置 ]  %s", launcherText("launcher.settingsSectionTitle", "Preferences & Display").utf8Ptr());
 
-      if (ImGui::Button(launcherText("launcher.uiSettings", "🖥 Display & Global Settings").utf8Ptr(), ImVec2(halfW, 40.0f * scale))) {
+      if (ImGui::Button(launcherText("launcher.uiSettings", "Display & Global Settings").utf8Ptr(), ImVec2(halfW, 42.0f * scale))) {
         state.uiSettingsOpen = true;
       }
       ImGui::SameLine();
-      if (ImGui::Button(launcherText("launcher.exportDiagnostics", "📋 Export Logs").utf8Ptr(), ImVec2(halfW, 40.0f * scale))) {
+      if (ImGui::Button(launcherText("launcher.exportDiagnostics", "Export Logs").utf8Ptr(), ImVec2(halfW, 42.0f * scale))) {
         runLauncherAction("Export diagnostics", [&]() {
           if (auto svc = m_platformServices->externalFileAccessService()) {
             if (svc->exportDiagnostics()) {
@@ -3858,7 +3948,8 @@ private:
         });
       }
       ImGui::EndChild();
-      ImGui::PopStyleColor();
+      ImGui::PopStyleVar(2);
+      ImGui::PopStyleColor(2);
 
       ImGui::Spacing();
       renderLauncherStatusText(state);

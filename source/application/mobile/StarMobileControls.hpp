@@ -74,9 +74,9 @@ struct MobileTouchConfig {
   // of truth is this copy; the gamepad copy is kept in sync from it.
   bool joystickAimCursorEnabled = true;
   bool gyroEnabled = false;
-  float opacity = 0.35f;
+  float opacity = 0.70f;
   float size = 1.0f;
-  float outlineThickness = 1.5f;
+  float outlineThickness = 2.2f;
   float deadzone = 0.15f;
   float gyroSensitivity = 1.0f;
   bool gyroInvertX = false;

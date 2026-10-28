@@ -802,64 +802,81 @@ public:
     // (The inversion blend keys off source RGB, ignoring alpha coverage, so it
     // suits solid shapes; text is handled separately with an outline below.)
     float op = std::clamp(m_config.opacity, 0.0f, 1.0f);
-    auto contrast = [op](float c) { return 0.5f + (c - 0.5f) * op; };
-    auto contrastColor = [&contrast](float r, float g, float b) {
-      return IM_COL32((int)std::lround(contrast(r) * 255.0f),
-                      (int)std::lround(contrast(g) * 255.0f),
-                      (int)std::lround(contrast(b) * 255.0f), 255);
-    };
-    ImU32 base = contrastColor(1.0f, 1.0f, 1.0f);
-    ImU32 fill = contrastColor(0.31f, 0.63f, 1.0f);
-    float thickness = std::max(1.0f, m_config.outlineThickness);
+    float alphaFactor = std::clamp(op * 1.4f + 0.25f, 0.35f, 1.0f);
 
-    // Text can't share the inversion blend (font coverage is stored in alpha, so
-    // inverting by RGB would flip whole glyph quads). Labels instead get a dark
-    // outline behind a light glyph so they stay legible on any background.
-    ImU32 labelColor = IM_COL32(255, 255, 255, (int)(230.0f * op));
-    ImU32 labelOutline = IM_COL32(0, 0, 0, (int)(210.0f * op));
+    ImU32 base = IM_COL32(186, 230, 253, (int)(245.0f * alphaFactor));
+    ImU32 fill = IM_COL32(14, 165, 233, (int)(220.0f * alphaFactor));
+    float thickness = std::max(2.0f, m_config.outlineThickness);
+
+    ImU32 labelColor = IM_COL32(255, 255, 255, (int)(255.0f * alphaFactor));
+    ImU32 labelOutline = IM_COL32(0, 0, 0, (int)(230.0f * alphaFactor));
 
     std::vector<OverlayLabel> labels;
 
-    // Modern mobile disc underlay pass (standard alpha blending)
-    ImU32 discBg = IM_COL32(12, 22, 38, (int)(125.0f * op));
-    ImU32 discBgActive = IM_COL32(14, 165, 233, (int)(90.0f * op));
+    ImU32 discBg = IM_COL32(12, 20, 34, (int)(180.0f * alphaFactor));
+
     for (auto const& element : m_elements) {
       if (!element.enabled || element.kind == MobileTouchElementKind::PerformanceCounter)
         continue;
+
       Vec2F center = elementCenter(element);
       float elementRadius = radius * std::clamp(element.size, 0.45f, 2.4f);
       float drawRadius = elementRadius / radiusScale;
       bool isHeld = (m_joystickActive && m_joystickElementId == element.id)
                  || (m_aimJoystickActive && m_aimJoystickElementId == element.id)
                  || heldElement(element.id) || m_toggledElements.contains(element.id);
-      draw->AddCircleFilled(ip(center), drawRadius, isHeld ? discBgActive : discBg, 36);
-    }
-
-    // Shape pass: switch to the inversion blend for the button geometry, then
-    // restore ImGui's default blend state afterwards.
-    draw->AddCallback(applyContrastBlendCallback, nullptr);
-
-    for (auto const& element : m_elements) {
-      if (!element.enabled)
-        continue;
-
-      Vec2F center = elementCenter(element);
-      float elementRadius = radius * std::clamp(element.size, 0.45f, 2.4f);
-      float drawRadius = elementRadius / radiusScale;
 
       if (element.kind == MobileTouchElementKind::Joystick) {
-        draw->AddCircle(ip(center), drawRadius, base, 48, thickness);
-        if (m_joystickActive && m_joystickElementId == element.id)
-          draw->AddCircleFilled(ip(m_joystickCurrent), drawRadius * 0.45f, fill, 32);
+        draw->AddCircleFilled(ip(center), drawRadius, discBg, 48);
+        draw->AddCircle(ip(center), drawRadius, isHeld ? IM_COL32(255, 255, 255, (int)(250.0f * alphaFactor)) : base, 48, thickness);
+
+        float tickLen = drawRadius * 0.12f;
+        ImVec2 c = ip(center);
+        draw->AddLine(ImVec2(c.x, c.y - drawRadius), ImVec2(c.x, c.y - drawRadius + tickLen), base, thickness);
+        draw->AddLine(ImVec2(c.x, c.y + drawRadius), ImVec2(c.x, c.y + drawRadius - tickLen), base, thickness);
+        draw->AddLine(ImVec2(c.x - drawRadius, c.y), ImVec2(c.x - drawRadius + tickLen, c.y), base, thickness);
+        draw->AddLine(ImVec2(c.x + drawRadius, c.y), ImVec2(c.x + drawRadius - tickLen, c.y), base, thickness);
+
+        ImVec2 knobPos = c;
+        if (m_joystickActive && m_joystickElementId == element.id) {
+          Vec2F delta = m_joystickCurrent - center;
+          float mag = delta.magnitude();
+          float maxKnob = elementRadius * 0.60f;
+          if (mag > maxKnob)
+            delta = delta / mag * maxKnob;
+          knobPos = ip(center + delta);
+        }
+        float knobRadius = drawRadius * 0.38f;
+        draw->AddCircleFilled(knobPos, knobRadius, isHeld ? fill : IM_COL32(30, 41, 59, (int)(190.0f * alphaFactor)), 32);
+        draw->AddCircle(knobPos, knobRadius, isHeld ? IM_COL32(255, 255, 255, 250) : base, 32, thickness);
+        draw->AddCircleFilled(knobPos, knobRadius * 0.28f, IM_COL32(255, 255, 255, isHeld ? 250 : 180), 16);
       } else if (element.kind == MobileTouchElementKind::AimJoystick) {
-        draw->AddCircle(ip(center), drawRadius, base, 48, thickness);
-        if (m_aimJoystickActive && m_aimJoystickElementId == element.id)
-          draw->AddCircleFilled(ip(m_aimJoystickCurrent), drawRadius * 0.35f, fill, 32);
+        draw->AddCircleFilled(ip(center), drawRadius, discBg, 48);
+        draw->AddCircle(ip(center), drawRadius, isHeld ? IM_COL32(255, 255, 255, (int)(250.0f * alphaFactor)) : base, 48, thickness);
+
+        float tickLen = drawRadius * 0.12f;
+        ImVec2 c = ip(center);
+        draw->AddLine(ImVec2(c.x, c.y - drawRadius), ImVec2(c.x, c.y - drawRadius + tickLen), base, thickness);
+        draw->AddLine(ImVec2(c.x, c.y + drawRadius), ImVec2(c.x, c.y + drawRadius - tickLen), base, thickness);
+        draw->AddLine(ImVec2(c.x - drawRadius, c.y), ImVec2(c.x - drawRadius + tickLen, c.y), base, thickness);
+        draw->AddLine(ImVec2(c.x + drawRadius, c.y), ImVec2(c.x + drawRadius - tickLen, c.y), base, thickness);
+
+        ImVec2 knobPos = c;
+        if (m_aimJoystickActive && m_aimJoystickElementId == element.id) {
+          Vec2F delta = m_aimJoystickCurrent - center;
+          float mag = delta.magnitude();
+          float maxKnob = elementRadius * 0.55f;
+          if (mag > maxKnob)
+            delta = delta / mag * maxKnob;
+          knobPos = ip(center + delta);
+        }
+        float knobRadius = drawRadius * 0.38f;
+        draw->AddCircleFilled(knobPos, knobRadius, isHeld ? fill : IM_COL32(30, 41, 59, (int)(190.0f * alphaFactor)), 32);
+        draw->AddCircle(knobPos, knobRadius, isHeld ? IM_COL32(255, 255, 255, 250) : base, 32, thickness);
+        draw->AddCircleFilled(knobPos, knobRadius * 0.28f, IM_COL32(255, 255, 255, isHeld ? 250 : 180), 16);
       } else if (element.kind == MobileTouchElementKind::DPad) {
         drawDPad(draw, ip(center), drawRadius, element.id, base, fill, thickness, labels);
       } else if (element.kind == MobileTouchElementKind::PerformanceCounter) {
-        // Passive display, not a touch target: no shape, just queued text
-        // drawn in the un-blended text pass below (same as other labels).
         labels.push_back({ip(center), perfCounterText(element.perfCounterMode, fps)});
       } else {
         bool held = heldElement(element.id)
@@ -867,9 +884,6 @@ public:
         drawButton(draw, ip(center), drawRadius * 0.55f, held, element.label.utf8Ptr(), base, fill, thickness, labels);
       }
     }
-
-    // Restore the default alpha blend before drawing text on top of the shapes.
-    draw->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
 
     for (auto const& label : labels)
       drawLabelWithOutline(draw, label.pos, label.text.utf8Ptr(), labelColor, labelOutline);
@@ -1181,7 +1195,6 @@ private:
     trackTapMotion(*ptr, pos);
 
     if (ptr->role == FingerRole::Joystick) {
-      m_joystickCurrent = pos;
       float radius = controlRadius();
       if (auto element = findElement(ptr->elementId))
         radius *= std::clamp(element->size, 0.45f, 2.4f);
@@ -1190,6 +1203,7 @@ private:
       if (mag > radius)
         delta = delta / mag * radius;
 
+      m_joystickCurrent = m_joystickOrigin + delta;
       float normMag = delta.magnitude() / radius;
       if (normMag < m_config.deadzone)
         m_moveVec = {};
@@ -1867,7 +1881,9 @@ private:
   // legible on any background (light glyph shows on dark scenery, dark outline
   // shows on light scenery) — the touch-control analogue of Minecraft's
   // drop-shadowed HUD text.
-  static void drawLabelWithOutline(ImDrawList* draw, ImVec2 pos, char const* text, ImU32 color, ImU32 outline) {
+  static void drawLabelWithOutline(ImDrawList* draw, ImVec2 center, char const* text, ImU32 color, ImU32 outline) {
+    ImVec2 textSize = ImGui::CalcTextSize(text);
+    ImVec2 pos(center.x - textSize.x * 0.5f, center.y - textSize.y * 0.5f);
     static ImVec2 const offsets[8] = {
       {-1.0f, -1.0f}, {0.0f, -1.0f}, {1.0f, -1.0f},
       {-1.0f,  0.0f},                {1.0f,  0.0f},
@@ -1879,10 +1895,12 @@ private:
   }
 
   static void drawButton(ImDrawList* draw, ImVec2 center, float radius, bool held, char const* label, ImU32 base, ImU32 fill, float thickness, std::vector<OverlayLabel>& labels) {
-    draw->AddCircle(center, radius, base, 48, thickness);
-    if (held)
-      draw->AddCircleFilled(center, radius, fill, 32);
-    labels.push_back({ImVec2(center.x - radius * 0.2f, center.y - radius * 0.35f), label});
+    ImU32 btnBg = held ? fill : IM_COL32(14, 22, 36, 185);
+    ImU32 btnBorder = held ? IM_COL32(255, 255, 255, 250) : base;
+    draw->AddCircleFilled(center, radius, btnBg, 48);
+    draw->AddCircle(center, radius, btnBorder, 48, thickness);
+    draw->AddCircle(center, radius * 0.85f, held ? IM_COL32(255, 255, 255, 80) : IM_COL32(147, 197, 253, 40), 48, 1.0f);
+    labels.push_back({center, label});
   }
 
   void drawDPad(ImDrawList* draw, ImVec2 center, float radius, String const& id, ImU32 base, ImU32 fill, float thickness, std::vector<OverlayLabel>& labels) const {
