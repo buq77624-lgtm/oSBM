@@ -1,0 +1,414 @@
+{
+  "version": 5,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 23,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "architecture": { "value": "x64", "strategy": "external" },
+      "generator": "Ninja",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "CMAKE_CXX_STANDARD": "17",
+        "CMAKE_INSTALL_PREFIX": "${sourceParentDir}/install",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceParentDir}/triplets",
+        "VCPKG_OVERLAY_PORTS": "${sourceParentDir}/ports",
+        "CMAKE_VERBOSE_MAKEFILE": true,
+        "BUILD_TESTING": true,
+        "STAR_ENABLE_STEAM_INTEGRATION": true,
+        "STAR_ENABLE_DISCORD_INTEGRATION": true
+      },
+      "vendor": {
+        "microsoft.com/VisualStudioRemoteSettings/CMake/2.0": {
+          "sourceRootDir": "$ms{localSourceDir}\\..",
+          "remoteSourceRootDir": "$env{HOME}/.vs/wsl",
+          "copySourcesOptions": {
+            "method": "rsync",
+            "exclusionList": [ ".vs", ".git", "out", "dist", "attic", "build" ]
+          }
+        }
+      }
+    },
+    {
+      "inherits": "base",
+      "name": "windows-release",
+      "displayName": "Windows x64",
+      "binaryDir": "${sourceParentDir}/build/windows-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-mixed-md",
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL",
+        "CMAKE_INCLUDE_PATH": "${sourceParentDir}/lib/windows/include",
+        "CMAKE_LIBRARY_PATH": "${sourceParentDir}/lib/windows",
+        "STAR_USE_RPMALLOC": true,
+        "STAR_USE_JEMALLOC": false
+      },
+      "vendor": {
+        "microsoft.com/VisualStudioSettings/CMake/1.0": {
+          "hostOS": [ "Windows" ]
+        }
+      }
+    },
+    {
+      "inherits": "windows-release",
+      "name": "windows-release-VS2022",
+      "displayName": "Windows x64 (Visual Studio 2022)",
+      "generator": "Visual Studio 17 2022"
+    },
+    {
+      "inherits": "windows-release",
+      "name": "windows-launcher-release",
+      "displayName": "Windows x64 (oSBM ImGui launcher)",
+      "description": "Desktop Windows build using the oSBM app path: ImGui launcher, touch/gamepad adapters, mobile platform services.",
+      "binaryDir": "${sourceParentDir}/build/windows-launcher-release",
+      "cacheVariables": {
+        "STAR_PC_MOBILE_LAUNCHER": true,
+        "STAR_ENABLE_STEAM_INTEGRATION": false,
+        "STAR_ENABLE_DISCORD_INTEGRATION": false
+      }
+    },
+    {
+      "inherits": "base",
+      "name": "linux-release",
+      "displayName": "Linux x64",
+      "binaryDir": "${sourceParentDir}/build/linux-release",
+      "cacheVariables": {
+        "CMAKE_MAKE_PROGRAM": "ninja",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "VCPKG_TARGET_TRIPLET": "x64-linux-mixed",
+        "CMAKE_INCLUDE_PATH": "${sourceParentDir}/lib/linux/include",
+        "CMAKE_LIBRARY_PATH": "${sourceParentDir}/lib/linux",
+        "STAR_ENABLE_STATIC_LIBGCC_LIBSTDCXX": true,
+        "STAR_USE_JEMALLOC": true
+      },
+      "vendor": {
+        "microsoft.com/VisualStudioSettings/CMake/1.0": {
+          "hostOS": [ "Linux" ]
+        },
+        "microsoft.com/VisualStudioRemoteSettings/CMake/2.0": {
+          "sourceRootDir": "$ms{localSourceDir}\\..",
+          "remoteSourceRootDir": "$env{HOME}/.vs/wsl"
+        }
+      }
+    },
+    {
+      "inherits": "linux-release",
+      "name": "linux-launcher-release",
+      "displayName": "Linux x64 (oSBM ImGui launcher)",
+      "description": "Desktop Linux build using the oSBM app path: ImGui launcher, touch/gamepad adapters, mobile platform services. Keeps the desktop GL/GLEW renderer and jemalloc.",
+      "binaryDir": "${sourceParentDir}/build/linux-launcher-release",
+      "cacheVariables": {
+        "STAR_PC_MOBILE_LAUNCHER": true,
+        "STAR_ENABLE_STEAM_INTEGRATION": false,
+        "STAR_ENABLE_DISCORD_INTEGRATION": false
+      }
+    },
+    {
+      "inherits": "linux-release",
+      "name": "linux-release-clang",
+      "displayName": "Linux Clang x64",
+      "binaryDir": "${sourceParentDir}/build/linux-release-clang",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "VCPKG_TARGET_TRIPLET": "x64-linux-mixed-clang",
+        "STAR_USE_JEMALLOC": true
+      }
+    },
+    {
+      "inherits": "base",
+      "name": "macos-release",
+      "displayName": "macOS x64",
+      "binaryDir": "${sourceParentDir}/build/macos-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "VCPKG_TARGET_TRIPLET": "x64-osx-mixed",
+        "CMAKE_INCLUDE_PATH": "${sourceParentDir}/lib/osx/include",
+        "CMAKE_LIBRARY_PATH": "${sourceParentDir}/lib/osx/x64;${sourceParentDir}/lib/osx",
+        "STAR_ENABLE_STATIC_LIBGCC_LIBSTDCXX": true,
+        "STAR_USE_JEMALLOC": false,
+        "STAR_ENABLE_DISCORD_INTEGRATION": false
+      },
+      "vendor": {
+        "microsoft.com/VisualStudioSettings/CMake/1.0": {
+          "hostOS": [ "macOS" ]
+        }
+      }
+    },
+    {
+      "inherits": "macos-release",
+      "name": "macos-arm-release",
+      "displayName": "macOS ARM",
+      "binaryDir": "${sourceParentDir}/build/macos-arm-release",
+      "architecture": { "value": "arm64", "strategy": "external" },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "arm64-osx-mixed",
+        "CMAKE_LIBRARY_PATH": "${sourceParentDir}/lib/osx/arm64;${sourceParentDir}/lib/osx"
+      }
+    },
+    {
+      "inherits": "macos-release",
+      "name": "macos-launcher-release",
+      "displayName": "macOS x64 (oSBM ImGui launcher)",
+      "description": "Desktop macOS build using the oSBM app path: ImGui launcher, touch/gamepad adapters, mobile platform services.",
+      "binaryDir": "${sourceParentDir}/build/macos-launcher-release",
+      "cacheVariables": {
+        "STAR_PC_MOBILE_LAUNCHER": true,
+        "STAR_ENABLE_DISCORD_INTEGRATION": false
+      }
+    },
+    {
+      "inherits": "macos-arm-release",
+      "name": "macos-arm-launcher-release",
+      "displayName": "macOS ARM (oSBM ImGui launcher)",
+      "description": "Desktop macOS ARM build using the oSBM app path: ImGui launcher, touch/gamepad adapters, mobile platform services.",
+      "binaryDir": "${sourceParentDir}/build/macos-arm-launcher-release",
+      "cacheVariables": {
+        "STAR_PC_MOBILE_LAUNCHER": true,
+        "STAR_ENABLE_DISCORD_INTEGRATION": false
+      }
+    },
+    {
+      "inherits": "base",
+      "name": "android-arm64-debug",
+      "displayName": "Android ARM64 (experimental)",
+      "description": "Android-first mobile preset. Requires ANDROID_NDK_HOME and may need local toolchain tweaks.",
+      "binaryDir": "${sourceParentDir}/build/android-arm64-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_SYSTEM_NAME": "Android",
+        "CMAKE_SYSTEM_VERSION": "28",
+        "CMAKE_ANDROID_NDK": "$env{ANDROID_NDK_HOME}",
+        "CMAKE_ANDROID_ARCH_ABI": "arm64-v8a",
+        "CMAKE_ANDROID_API": "28",
+        "ANDROID_PLATFORM": "android-28",
+        "CMAKE_ANDROID_STL_TYPE": "c++_static",
+        "VCPKG_TARGET_TRIPLET": "arm64-android-mixed",
+        "BUILD_TESTING": false,
+        "STAR_ENABLE_STEAM_INTEGRATION": false,
+        "STAR_ENABLE_DISCORD_INTEGRATION": false
+      }
+    },
+    {
+      "inherits": "base",
+      "name": "android-arm64-release",
+      "displayName": "Android ARM64 Release",
+      "description": "Android release preset with production optimizations and release-only vcpkg artifacts.",
+      "binaryDir": "${sourceParentDir}/build/android-arm64-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_SYSTEM_NAME": "Android",
+        "CMAKE_SYSTEM_VERSION": "28",
+        "CMAKE_ANDROID_NDK": "$env{ANDROID_NDK_HOME}",
+        "CMAKE_ANDROID_ARCH_ABI": "arm64-v8a",
+        "CMAKE_ANDROID_API": "28",
+        "ANDROID_PLATFORM": "android-28",
+        "CMAKE_ANDROID_STL_TYPE": "c++_static",
+        "VCPKG_TARGET_TRIPLET": "arm64-android-mixed",
+        "VCPKG_BUILD_TYPE": "release",
+        "BUILD_TESTING": false,
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "ON",
+        "STAR_ENABLE_STEAM_INTEGRATION": false,
+        "STAR_ENABLE_DISCORD_INTEGRATION": false
+      }
+    },
+    {
+      "inherits": "android-arm64-debug",
+      "name": "android-armv7-debug",
+      "displayName": "Android ARMv7 Debug",
+      "binaryDir": "${sourceParentDir}/build/android-armv7-debug",
+      "cacheVariables": {
+        "CMAKE_ANDROID_ARCH_ABI": "armeabi-v7a",
+        "CMAKE_ANDROID_ARM_NEON": "ON",
+        "VCPKG_TARGET_TRIPLET": "arm-neon-android-mixed"
+      }
+    },
+    {
+      "inherits": "android-arm64-debug",
+      "name": "android-x64-debug",
+      "displayName": "Android x86_64 Debug",
+      "binaryDir": "${sourceParentDir}/build/android-x64-debug",
+      "cacheVariables": {
+        "CMAKE_ANDROID_ARCH_ABI": "x86_64",
+        "VCPKG_TARGET_TRIPLET": "x64-android-mixed"
+      }
+    },
+    {
+      "inherits": "android-arm64-release",
+      "name": "android-armv7-release",
+      "displayName": "Android ARMv7 Release",
+      "description": "32-bit ARM release preset for devices shipping a 32-bit-only Android userspace (e.g. Galaxy A13 5G).",
+      "binaryDir": "${sourceParentDir}/build/android-armv7-release",
+      "cacheVariables": {
+        "CMAKE_ANDROID_ARCH_ABI": "armeabi-v7a",
+        "CMAKE_ANDROID_ARM_NEON": "ON",
+        "VCPKG_TARGET_TRIPLET": "arm-neon-android-mixed"
+      }
+    },
+    {
+      "inherits": "android-arm64-release",
+      "name": "android-x64-release",
+      "displayName": "Android x86_64 Release",
+      "description": "x86_64 release preset for emulators and Chromebooks.",
+      "binaryDir": "${sourceParentDir}/build/android-x64-release",
+      "cacheVariables": {
+        "CMAKE_ANDROID_ARCH_ABI": "x86_64",
+        "VCPKG_TARGET_TRIPLET": "x64-android-mixed"
+      }
+    },
+    {
+      "inherits": "base",
+      "name": "ios-arm64-debug",
+      "displayName": "iOS ARM64 compile-only (experimental)",
+      "description": "Compile-only iOS readiness preset. Runtime file-access integration remains TODO.",
+      "binaryDir": "${sourceParentDir}/build/ios-arm64-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_SYSTEM_NAME": "iOS",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "VCPKG_TARGET_TRIPLET": "arm64-ios-mixed",
+        "STAR_ENABLE_STEAM_INTEGRATION": false,
+        "STAR_ENABLE_DISCORD_INTEGRATION": false
+      }
+    },
+    {
+      "name": "switch-release",
+      "displayName": "Nintendo Switch (ARM64 homebrew NRO)",
+      "description": "devkitA64 + libnx homebrew build. Requires DEVKITPRO and the cross-compiled SDL3/imgui/re2/cpr/zstd/abseil portlibs. Does not use vcpkg.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceParentDir}/build/switch-release",
+      "toolchainFile": "$env{DEVKITPRO}/cmake/Switch.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_STANDARD": "17",
+        "BUILD_TESTING": false,
+        "STAR_BUILD_QT_TOOLS": false,
+        "STAR_ENABLE_STEAM_INTEGRATION": false,
+        "STAR_ENABLE_DISCORD_INTEGRATION": false
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-release",
+      "configurePreset": "windows-release"
+    },
+    {
+      "name": "windows-debug",
+      "configurePreset": "windows-release"
+    },
+    {
+      "name": "windows-release-VS2022",
+      "configurePreset": "windows-release-VS2022",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-debug-VS2022",
+      "configurePreset": "windows-release-VS2022",
+      "configuration": "Debug"
+    },
+    {
+      "name": "windows-launcher-release",
+      "configurePreset": "windows-launcher-release"
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release"
+    },
+    {
+      "name": "linux-launcher-release",
+      "configurePreset": "linux-launcher-release"
+    },
+    {
+      "name": "linux-release-clang",
+      "configurePreset": "linux-release-clang"
+    },
+    {
+      "name": "macos-release",
+      "configurePreset": "macos-release"
+    },
+    {
+      "name": "macos-arm-release",
+      "configurePreset": "macos-arm-release"
+    },
+    {
+      "name": "macos-launcher-release",
+      "configurePreset": "macos-launcher-release"
+    },
+    {
+      "name": "macos-arm-launcher-release",
+      "configurePreset": "macos-arm-launcher-release"
+    },
+    {
+      "name": "android-arm64-debug",
+      "configurePreset": "android-arm64-debug"
+    },
+    {
+      "name": "android-arm64-release",
+      "configurePreset": "android-arm64-release"
+    },
+    {
+      "name": "android-armv7-debug",
+      "configurePreset": "android-armv7-debug"
+    },
+    {
+      "name": "android-x64-debug",
+      "configurePreset": "android-x64-debug"
+    },
+    {
+      "name": "android-armv7-release",
+      "configurePreset": "android-armv7-release"
+    },
+    {
+      "name": "android-x64-release",
+      "configurePreset": "android-x64-release"
+    },
+    {
+      "name": "android-universal-release",
+      "configurePreset": "android-arm64-release",
+      "targets": [ "android_apk_universal" ]
+    },
+    {
+      "name": "ios-arm64-debug",
+      "configurePreset": "ios-arm64-debug"
+    },
+    {
+      "name": "switch-release",
+      "configurePreset": "switch-release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "output": { "outputOnFailure": true },
+      "filter": { "include": { "label": "NoAssets" } }
+    },
+    {
+      "inherits": "base",
+      "name": "windows-release",
+      "configurePreset": "windows-release",
+      "configuration": "Release"
+    },
+    {
+      "inherits": "base",
+      "name": "linux-release",
+      "configurePreset": "linux-release"
+    },
+    {
+      "inherits": "base",
+      "name": "macos-release",
+      "configurePreset": "macos-release"
+    },
+    {
+      "inherits": "base",
+      "name": "macos-arm-release",
+      "configurePreset": "macos-arm-release"
+    }
+  ]
+}

@@ -1,0 +1,308 @@
+#include "StarArmors.hpp"
+#include "StarAssets.hpp"
+#include "StarJsonExtra.hpp"
+#include "StarImageProcessing.hpp"
+#include "StarHumanoid.hpp"
+#include "StarRoot.hpp"
+#include "StarStoredFunctions.hpp"
+#include "StarPlayer.hpp"
+#include "StarDirectives.hpp"
+
+namespace Star {
+
+EnumMap<ArmorType> ArmorTypeNames{
+  {ArmorType::Head, "Head"},
+  {ArmorType::Chest, "Chest"},
+  {ArmorType::Legs, "Legs"},
+  {ArmorType::Back, "Back"}
+};
+
+ArmorItem::ArmorItem(Json const& config, String const& directory, Json const& data) : Item(config, directory, data), SwingableItem(config) {
+  refreshStatusEffects();
+  m_effectSources = jsonToStringSet(instanceValue("effectSources", JsonArray()));
+  m_techModule = instanceValue("techModule", "").toString();
+  if (m_techModule->empty())
+    m_techModule = {};
+  else
+    m_techModule = AssetPath::relativeTo(directory, *m_techModule);
+
+  auto directives = instanceValue("directives", "").toString();
+  m_directives = directives;
+  m_fullbright = instanceValue("fullbright",false).toBool();
+
+  m_colorOptions = colorDirectivesFromConfig(config.getArray("colorOptions", JsonArray{""}));
+  if (!m_directives)
+    m_directives = "?" + m_colorOptions.wrap(instanceValue("colorIndex", 0).toUInt());
+  refreshIconDrawables();
+
+  if (auto jFlipDirectives = instanceValueOfType("flipDirectives", Json::Type::String)) {
+    auto flipDirectives = jFlipDirectives.toString();
+    auto directivesStr = m_directives.stringPtr();
+    if (flipDirectives.beginsWith('+') && directivesStr)
+      m_flipDirectives = Directives(*directivesStr + flipDirectives.substr(1));
+    else
+      m_flipDirectives = Directives(std::move(flipDirectives));
+  }
+
+  m_bypassNude = instanceValueOfType("bypassNude", Json::Type::Bool, false).toBool();
+  m_hideInVanillaSlots = instanceValueOfType("hideInVanillaSlots", Json::Type::Bool, false).toBool();
+
+  if (auto armorTypesToHide = instanceValueOfType("armorTypesToHide", Json::Type::Array)) {
+    m_armorTypesToHide.emplace();
+    for (auto& str : armorTypesToHide.toArray()) {
+      if (!str.isType(Json::Type::String))
+        continue;
+      if (auto armorType = ArmorTypeNames.leftPtr(str.toString()))
+        m_armorTypesToHide->add(*armorType);
+    }
+  }
+
+  m_hideBody = config.getBool("hideBody", false);
+  m_statusEffectsInCosmeticSlot = config.getBool("statusEffectsInCosmeticSlots", false);
+}
+
+List<PersistentStatusEffect> ArmorItem::statusEffects() const {
+  return m_statusEffects;
+}
+
+bool ArmorItem::statusEffectsInCosmeticSlot() const {
+  return m_statusEffectsInCosmeticSlot;
+}
+
+List<PersistentStatusEffect> ArmorItem::cosmeticStatusEffects() const {
+  return m_cosmeticStatusEffects;
+}
+
+StringSet ArmorItem::effectSources() const {
+  return m_effectSources;
+}
+
+List<Drawable> ArmorItem::drawables() const {
+  auto drawables = iconDrawables();
+  Drawable::scaleAll(drawables, 1.0f / TilePixels);
+  Drawable::translateAll(drawables, -handPosition() / TilePixels);
+  return drawables;
+}
+
+float ArmorItem::getAngle(float) {
+  return -25.0f * Constants::deg2rad;
+}
+
+void ArmorItem::fire(FireMode, bool, bool) {}
+void ArmorItem::fireTriggered() {}
+
+List<String> const& ArmorItem::colorOptions() {
+  return m_colorOptions;
+}
+
+Directives const& ArmorItem::directives(bool flip) const {
+  return (flip && m_flipDirectives) ? *m_flipDirectives : m_directives;
+}
+
+bool ArmorItem::fullbright() const {
+  return m_fullbright;
+}
+
+bool ArmorItem::flipping() const {
+  return m_flipDirectives.isValid();
+}
+
+bool ArmorItem::visible(bool extraCosmetic) const {
+  return extraCosmetic || !m_hideInVanillaSlots;
+}
+
+HashSet<ArmorType> const& ArmorItem::armorTypesToHide() {
+  if (!m_armorTypesToHide) {
+    m_armorTypesToHide.emplace();
+    m_armorTypesToHide->add(armorType());
+  }
+  return *m_armorTypesToHide;
+}
+
+bool ArmorItem::hideBody() const {
+  return m_hideBody;
+}
+
+bool ArmorItem::bypassNude() const {
+  return m_bypassNude;
+}
+
+
+Maybe<String> const& ArmorItem::techModule() const {
+  return m_techModule;
+}
+
+
+void ArmorItem::refreshIconDrawables() {
+  auto drawables = iconDrawables();
+  for (auto& drawable : drawables) {
+    if (drawable.isImage()) {
+      drawable.imagePart().removeDirectives(true);
+      drawable.imagePart().addDirectives(m_directives, true);
+    }
+  }
+  setIconDrawables(std::move(drawables));
+}
+
+void ArmorItem::refreshStatusEffects() {
+  m_statusEffects = instanceValue("statusEffects", JsonArray()).toArray().transformed(jsonToPersistentStatusEffect);
+  m_cosmeticStatusEffects = instanceValue("cosmeticStatusEffects", JsonArray()).toArray().transformed(jsonToPersistentStatusEffect);
+  if (auto leveledStatusEffects = instanceValue("leveledStatusEffects", Json())) {
+    auto functionDatabase = Root::singleton().functionDatabase();
+    float level = instanceValue("level", 1).toFloat();
+    for (auto effectConfig : leveledStatusEffects.iterateArray()) {
+      float levelFunctionFactor = functionDatabase->function(effectConfig.getString("levelFunction"))->evaluate(level);
+      auto statModifier = jsonToStatModifier(effectConfig);
+      if (auto p = statModifier.ptr<StatBaseMultiplier>())
+        p->baseMultiplier = 1 + (p->baseMultiplier - 1) * levelFunctionFactor;
+      else if (auto p = statModifier.ptr<StatValueModifier>())
+        p->value *= levelFunctionFactor;
+      else if (auto p = statModifier.ptr<StatEffectiveMultiplier>())
+        p->effectiveMultiplier = 1 + (p->effectiveMultiplier - 1) * levelFunctionFactor;
+      m_statusEffects.append(statModifier);
+    }
+  }
+  if (auto augmentConfig = instanceValue("currentAugment", Json()))
+    m_statusEffects.appendAll(augmentConfig.getArray("effects", JsonArray()).transformed(jsonToPersistentStatusEffect));
+}
+
+HeadArmor::HeadArmor(Json const& config, String const& directory, Json const& data)
+  : ArmorItem(config, directory, data) {
+  m_maleImage = AssetPath::relativeTo(directory, config.getString("maleFrames"));
+  m_femaleImage = AssetPath::relativeTo(directory, config.getString("femaleFrames"));
+
+  String maskDirectivesStr = instanceValue("mask").toString();
+  if (!maskDirectivesStr.empty() && !maskDirectivesStr.contains("?"))
+    m_maskDirectives = "?addmask=" + AssetPath::relativeTo(directory, maskDirectivesStr) + ";0;0";
+  else
+    m_maskDirectives = maskDirectivesStr;
+}
+
+ItemPtr HeadArmor::clone() const {
+  return make_shared<HeadArmor>(*this);
+}
+
+ArmorType HeadArmor::armorType() const {
+  return ArmorType::Head;
+}
+
+String const& HeadArmor::frameset(Gender gender) const {
+  if (gender == Gender::Male)
+    return m_maleImage;
+  else
+    return m_femaleImage;
+}
+
+Directives const& HeadArmor::maskDirectives() const {
+  return m_maskDirectives;
+}
+
+List<Drawable> HeadArmor::preview(PlayerPtr const& viewer) const {
+  Gender gender = viewer ? viewer->gender() : Gender::Male;
+  HumanoidPtr humanoid = viewer ? viewer->humanoid() : Humanoid::makeDummy(gender);
+  return humanoid->renderDummy(gender, this, nullptr, nullptr, nullptr);
+}
+
+ChestArmor::ChestArmor(Json const& config, String const& directory, Json const& data)
+  : ArmorItem(config, directory, data) {
+  Json maleImages = config.get("maleFrames");
+  m_maleBodyImage = AssetPath::relativeTo(directory, maleImages.getString("body"));
+  m_maleFrontSleeveImage = AssetPath::relativeTo(directory, maleImages.getString("frontSleeve"));
+  m_maleBackSleeveImage = AssetPath::relativeTo(directory, maleImages.getString("backSleeve"));
+
+  Json femaleImages = config.get("femaleFrames");
+  m_femaleBodyImage = AssetPath::relativeTo(directory, femaleImages.getString("body"));
+  m_femaleFrontSleeveImage = AssetPath::relativeTo(directory, femaleImages.getString("frontSleeve"));
+  m_femaleBackSleeveImage = AssetPath::relativeTo(directory, femaleImages.getString("backSleeve"));
+}
+
+ItemPtr ChestArmor::clone() const {
+  return make_shared<ChestArmor>(*this);
+}
+
+ArmorType ChestArmor::armorType() const {
+  return ArmorType::Chest;
+}
+
+String const& ChestArmor::bodyFrameset(Gender gender) const {
+  if (gender == Gender::Male)
+    return m_maleBodyImage;
+  else
+    return m_femaleBodyImage;
+}
+
+String const& ChestArmor::frontSleeveFrameset(Gender gender) const {
+  if (gender == Gender::Male)
+    return m_maleFrontSleeveImage;
+  else
+    return m_femaleFrontSleeveImage;
+}
+
+String const& ChestArmor::backSleeveFrameset(Gender gender) const {
+  if (gender == Gender::Male)
+    return m_maleBackSleeveImage;
+  else
+    return m_femaleBackSleeveImage;
+}
+
+List<Drawable> ChestArmor::preview(PlayerPtr const& viewer) const {
+  Gender gender = viewer ? viewer->gender() : Gender::Male;
+  HumanoidPtr humanoid = viewer ? viewer->humanoid() : Humanoid::makeDummy(gender);
+  return humanoid->renderDummy(gender, nullptr, this, nullptr, nullptr);
+}
+
+LegsArmor::LegsArmor(Json const& config, String const& directory, Json const& data)
+  : ArmorItem(config, directory, data) {
+  m_maleImage = AssetPath::relativeTo(directory, config.getString("maleFrames"));
+  m_femaleImage = AssetPath::relativeTo(directory, config.getString("femaleFrames"));
+}
+
+ItemPtr LegsArmor::clone() const {
+  return make_shared<LegsArmor>(*this);
+}
+
+ArmorType LegsArmor::armorType() const {
+  return ArmorType::Legs;
+}
+
+String const& LegsArmor::frameset(Gender gender) const {
+  if (gender == Gender::Male)
+    return m_maleImage;
+  else
+    return m_femaleImage;
+}
+
+List<Drawable> LegsArmor::preview(PlayerPtr const& viewer) const {
+  Gender gender = viewer ? viewer->gender() : Gender::Male;
+  HumanoidPtr humanoid = viewer ? viewer->humanoid() : Humanoid::makeDummy(gender);
+  return humanoid->renderDummy(gender, nullptr, nullptr, this, nullptr);
+}
+
+BackArmor::BackArmor(Json const& config, String const& directory, Json const& data)
+  : ArmorItem(config, directory, data) {
+  m_maleImage = AssetPath::relativeTo(directory, config.getString("maleFrames"));
+  m_femaleImage = AssetPath::relativeTo(directory, config.getString("femaleFrames"));
+}
+
+ItemPtr BackArmor::clone() const {
+  return make_shared<BackArmor>(*this);
+}
+
+ArmorType BackArmor::armorType() const {
+  return ArmorType::Back;
+}
+
+String const& BackArmor::frameset(Gender gender) const {
+  if (gender == Gender::Male)
+    return m_maleImage;
+  else
+    return m_femaleImage;
+}
+
+List<Drawable> BackArmor::preview(PlayerPtr const& viewer) const {
+  Gender gender = viewer ? viewer->gender() : Gender::Male;
+  HumanoidPtr humanoid = viewer ? viewer->humanoid() : Humanoid::makeDummy(gender);
+  return humanoid->renderDummy(gender, nullptr, nullptr, nullptr, this);
+}
+
+}

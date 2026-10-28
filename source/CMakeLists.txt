@@ -1,0 +1,1008 @@
+cmake_minimum_required(VERSION 3.23)
+
+# Find SCCache or CCache
+if (NOT CMAKE_CXX_COMPILER_LAUNCHER MATCHES "ccache")
+  find_program(SCCACHE_PATH sccache)
+  if(SCCACHE_PATH)
+    message(STATUS "Using SCCache at ${SCCACHE_PATH}")
+    set(CMAKE_C_COMPILER_LAUNCHER ${SCCACHE_PATH})
+    set(CMAKE_CXX_COMPILER_LAUNCHER ${SCCACHE_PATH})
+  else()
+    find_program(CCACHE_PATH ccache)
+    if(CCACHE_PATH)
+      set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PATH}")
+      set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PATH}")
+      message(STATUS "Using CCache")
+    endif()
+  endif()
+endif()
+
+if(CMAKE_CXX_COMPILER_LAUNCHER MATCHES "ccache")
+  set(STAR_CCACHE TRUE)
+  set(STAR_PRECOMPILED_HEADERS FALSE)
+else()
+  set(STAR_CCACHE FALSE)
+  set(STAR_PRECOMPILED_HEADERS TRUE)
+  message(STATUS "Not using CCache")
+endif()
+
+project(starbound)
+set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../cmake)
+
+# Single source of truth for the release version. The Android host gradle
+# build and the CI workflows read the same file, so bumping the release only
+# requires editing VERSION at the repository root.
+file(READ "${PROJECT_SOURCE_DIR}/../VERSION" OSBM_VERSION)
+string(STRIP "${OSBM_VERSION}" OSBM_VERSION)
+message(STATUS "oSBM version: ${OSBM_VERSION}")
+
+set(CMAKE_CONFIGURATION_TYPES Debug RelWithAsserts RelWithDebInfo Release)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE INTERNAL "")
+set(CMAKE_EXE_LINKER_FLAGS_RELWITHASSERTS "" CACHE STRING "" FORCE)
+
+#include(CheckIPOSupported)
+#check_ipo_supported(RESULT lto_supported OUTPUT lto_output)
+#if(lto_supported)
+#  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+#endif()
+
+# Update the docstring on CMAKE_BUILD_TYPE to show what options we actually
+# allow
+# SET (CMAKE_BUILD_TYPE "${CMAKE_BUILD_TYPE}" CACHE STRING "Choose the type of build, options are: Debug RelWithAsserts RelWithDebInfo Release" FORCE)
+
+# Discover all the relevant environment / system information and place the
+# result in STAR_* cmake variables.
+
+# STAR_SOURCE_IDENTIFIER may be set to any string value
+if(NOT DEFINED STAR_SOURCE_IDENTIFIER)
+  include(GetGitRevisionDescription)
+  get_git_head_revision(STAR_GIT_REFSPEC STAR_GIT_HASHVAR)
+  set(STAR_SOURCE_IDENTIFIER "${STAR_GIT_HASHVAR}")
+endif()
+
+# Architecture identifier, like i386, x86_64 or ppc
+if(NOT DEFINED STAR_ARCHITECTURE)
+  include(TargetArch)
+  target_architecture(STAR_ARCHITECTURE)
+endif()
+
+# Either TRUE or FALSE
+if(NOT DEFINED STAR_LITTLE_ENDIAN)
+  include(TestBigEndian)
+  test_big_endian(BIGENDIAN)
+  if(NOT BIGENDIAN)
+    set(STAR_LITTLE_ENDIAN TRUE)
+  else()
+    set(STAR_LITTLE_ENDIAN FALSE)
+  endif()
+endif()
+
+# System name, like windows, macos, linux, freebsd, or (generic) unix
+if(NOT DEFINED STAR_SYSTEM)
+  if(WIN32)
+    set(STAR_SYSTEM "windows")
+  elseif(APPLE AND ${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
+    set(STAR_SYSTEM "macos")
+  elseif(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+    set(STAR_SYSTEM "linux")
+  elseif(${CMAKE_SYSTEM_NAME} STREQUAL "Android")
+    set(STAR_SYSTEM "android")
+  elseif(APPLE AND ${CMAKE_SYSTEM_NAME} STREQUAL "iOS")
+    set(STAR_SYSTEM "ios")
+  elseif(${CMAKE_SYSTEM_NAME} STREQUAL "NintendoSwitch")
+    set(STAR_SYSTEM "switch")
+  elseif(${CMAKE_SYSTEM_NAME} STREQUAL "FreeBSD")
+    set(STAR_SYSTEM "freebsd")
+  elseif(${CMAKE_SYSTEM_NAME} STREQUAL "NetBSD")
+    set(STAR_SYSTEM "netbsd")
+  elseif(UNIX)
+    set(STAR_SYSTEM "unix")
+  else()
+    set(STAR_SYSTEM "unknown")
+  endif()
+endif()
+
+if(NOT DEFINED STAR_SYSTEM_FAMILY)
+  if(WIN32)
+    set(STAR_SYSTEM_FAMILY "windows")
+  elseif(STAR_SYSTEM STREQUAL "android" OR STAR_SYSTEM STREQUAL "ios" OR STAR_SYSTEM STREQUAL "switch")
+    set(STAR_SYSTEM_FAMILY "mobile")
+  elseif(UNIX)
+    set(STAR_SYSTEM_FAMILY "unix")
+  else()
+    set(STAR_SYSTEM_FAMILY "unknown")
+  endif()
+endif()
+
+if(STAR_SYSTEM STREQUAL "ios")
+  enable_language(OBJCXX)
+endif()
+
+# C/C++ compiler ID, like clang, gnu, or msvc
+if(NOT DEFINED STAR_COMPILER)
+  if(NOT CMAKE_C_COMPILER_ID STREQUAL CMAKE_CXX_COMPILER_ID)
+    message(FATAL_ERROR "C and C++ compiler id do not match, unsupported build configuration")
+  endif()
+
+  if(CMAKE_C_COMPILER_ID STREQUAL "Clang" OR CMAKE_C_COMPILER_ID STREQUAL "AppleClang")
+    set(STAR_COMPILER "clang")
+  elseif(CMAKE_COMPILER_IS_GNUC)
+    set(STAR_COMPILER "gnu")
+  elseif(MSVC)
+    set(STAR_COMPILER "msvc")
+  else()
+    string(TOLOWER "${CMAKE_C_COMPILER_ID}" STAR_COMPILER)
+  endif()
+endif()
+
+# Enable OPTIONs based on the discovered system / environment...
+
+if(STAR_COMPILER STREQUAL "gnu")
+  option(STAR_ENABLE_STATIC_LIBGCC_LIBSTDCXX "Statically link libgcc and libstdc++" OFF)
+  option(STAR_ENABLE_GCC_PROFILING "Enable gcc/g++ profiling via the -pg flag" OFF)
+  option(STAR_ENABLE_GLIBCXX_DEBUG "Enable _GLIBCXX_DEBUG for g++" OFF)
+endif()
+
+if(STAR_COMPILER STREQUAL "msvc")
+  option(STAR_ENABLE_STATIC_MSVC_RUNTIME "Statically link with the CRT" OFF)
+endif()
+
+option(STAR_BUILD_GUI "Build GUI utilities and Client" ON)
+
+if(STAR_BUILD_GUI)
+  option(STAR_BUILD_QT_TOOLS "Build GUI utilities that require Qt" OFF)
+  option(STAR_ENABLE_STEAM_INTEGRATION "Use Steam platform services" OFF)
+  option(STAR_ENABLE_DISCORD_INTEGRATION "Use Discord platform services" OFF)
+endif()
+
+if(STAR_SYSTEM STREQUAL "android" OR STAR_SYSTEM STREQUAL "ios" OR STAR_SYSTEM STREQUAL "switch")
+  set(STAR_ENABLE_STEAM_INTEGRATION OFF CACHE BOOL "Use Steam platform services" FORCE)
+  set(STAR_ENABLE_DISCORD_INTEGRATION OFF CACHE BOOL "Use Discord platform services" FORCE)
+endif()
+
+option(STAR_LUA_APICHECK "Use lua api checks" OFF)
+option(STAR_USE_JEMALLOC "Use jemalloc allocators" OFF)
+option(STAR_USE_MIMALLOC "Use mimalloc allocators" OFF)
+option(STAR_USE_RPMALLOC "Use rpmalloc allocators" OFF)
+
+# Build the oSBM mobile-style app path (ImGui launcher + touch/gamepad
+# adapters + mobile platform services) on a desktop PC target. This flips
+# STAR_PLATFORM_MOBILE on (selecting the launcher app entry and the portable
+# mobile sources) WITHOUT setting STAR_SYSTEM_FAMILY_MOBILE or any
+# per-platform mobile macro -- so the desktop keeps its real GL/GLEW renderer
+# path, hardware cursor, full-resolution background, jemalloc, etc., and the
+# Android/iOS/Switch native code stays compiled out. Mobile devices set
+# STAR_PLATFORM_MOBILE via the family below regardless of this option.
+option(STAR_PC_MOBILE_LAUNCHER "Build the oSBM ImGui launcher / touch+gamepad app path on desktop PC" OFF)
+
+# Report all the discovered system / environment settings and all options.
+
+message(STATUS "Source ID: ${STAR_SOURCE_IDENTIFIER}")
+message(STATUS "Architecture: ${STAR_ARCHITECTURE}")
+message(STATUS "Little Endian: ${STAR_LITTLE_ENDIAN}")
+message(STATUS "System: ${STAR_SYSTEM}")
+message(STATUS "System family: ${STAR_SYSTEM_FAMILY}")
+message(STATUS "C/C++ compiler: ${STAR_COMPILER}")
+
+if(STAR_SYSTEM_FAMILY STREQUAL "mobile" OR STAR_PC_MOBILE_LAUNCHER)
+  # The launcher/ImGui app path is never built with precompiled headers on
+  # mobile; match that on a desktop launcher build to avoid PCH/imgui friction.
+  set(STAR_PRECOMPILED_HEADERS FALSE)
+endif()
+
+if(STAR_SYSTEM_ANDROID)
+  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+  if(CMAKE_ANDROID_ARCH_ABI STREQUAL "armeabi-v7a")
+    # 32-bit bionic defaults to a 32-bit off_t; the game seeks within paks
+    # that can exceed 2GB, so force 64-bit file offsets (fine on minSdk 26).
+    add_definitions(-D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE)
+  endif()
+endif()
+
+if(DEFINED STAR_ENABLE_STATIC_LIBGCC_LIBSTDCXX)
+  message(STATUS "Statically linking to libgcc / libstdc++: ${STAR_ENABLE_STATIC_LIBGCC_LIBSTDCXX}")
+endif()
+
+if(DEFINED STAR_ENABLE_STATIC_MSVC_RUNTIME)
+  message(STATUS "Statically linking to CRT: ${STAR_ENABLE_STATIC_MSVC_RUNTIME}")
+endif()
+
+if(DEFINED STAR_ENABLE_GLIBCXX_DEBUG)
+  message(STATUS "Enabling _GLIBCXX_DEBUG: ${STAR_ENABLE_GLIBCXX_DEBUG}")
+endif()
+
+message(STATUS "Building GUI: ${STAR_BUILD_GUI}")
+
+if(DEFINED STAR_BUILD_QT_TOOLS)
+  message(STATUS "Building Qt tools: ${STAR_BUILD_QT_TOOLS}")
+endif()
+
+if(DEFINED STAR_ENABLE_STEAM_INTEGRATION)
+  message(STATUS "Using Steam platform services: ${STAR_ENABLE_STEAM_INTEGRATION}")
+endif()
+
+if(DEFINED STAR_ENABLE_DISCORD_INTEGRATION)
+  message(STATUS "Using Discord platform services: ${STAR_ENABLE_DISCORD_INTEGRATION}")
+endif()
+
+message(STATUS "Using Lua API checks: ${STAR_LUA_APICHECK}")
+message(STATUS "Using jemalloc: ${STAR_USE_JEMALLOC}")
+message(STATUS "Using mimalloc: ${STAR_USE_MIMALLOC}")
+message(STATUS "Using rpmalloc: ${STAR_USE_RPMALLOC}")
+
+# Set C defines and cmake variables based on the build settings we have now
+# determined...
+
+# Set a cmake variable to true and define a corresponding C/C++ definition
+function(SET_FLAG flagValue)
+  set(${flagValue} TRUE PARENT_SCOPE)
+  add_definitions(-D${flagValue})
+endfunction()
+
+if(STAR_LITTLE_ENDIAN)
+  set_flag(STAR_LITTLE_ENDIAN)
+elseif()
+  set_flag(STAR_BIG_ENDIAN)
+endif()
+
+if(STAR_ARCHITECTURE STREQUAL "i386")
+  set_flag(STAR_ARCHITECTURE_I386)
+elseif(STAR_ARCHITECTURE STREQUAL "x86_64")
+  set_flag(STAR_ARCHITECTURE_X86_64)
+endif()
+
+if(STAR_SYSTEM STREQUAL "windows")
+  set_flag(STAR_SYSTEM_WINDOWS)
+elseif(STAR_SYSTEM STREQUAL "macos")
+  set_flag(STAR_SYSTEM_MACOS)
+elseif(STAR_SYSTEM STREQUAL "linux")
+  set_flag(STAR_SYSTEM_LINUX)
+elseif(STAR_SYSTEM STREQUAL "android")
+  set_flag(STAR_SYSTEM_ANDROID)
+elseif(STAR_SYSTEM STREQUAL "ios")
+  set_flag(STAR_SYSTEM_IOS)
+elseif(STAR_SYSTEM STREQUAL "switch")
+  set_flag(STAR_SYSTEM_SWITCH)
+elseif(STAR_SYSTEM STREQUAL "freebsd")
+  set_flag(STAR_SYSTEM_FREEBSD)
+elseif(STAR_SYSTEM STREQUAL "netbsd")
+  set_flag(STAR_SYSTEM_NETBSD)
+endif()
+
+if(STAR_SYSTEM_FAMILY STREQUAL "windows")
+  set_flag(STAR_SYSTEM_FAMILY_WINDOWS)
+elseif(STAR_SYSTEM_FAMILY STREQUAL "mobile")
+  set_flag(STAR_SYSTEM_FAMILY_MOBILE)
+  # Switch and Android default to rpmalloc: the system allocators (newlib's
+  # globally-locked dlmalloc on Switch, hardened scudo on Android) measured
+  # as the single largest engine cost -- on Switch under emulation the swap
+  # took the whole engine from ~55ms to ~6ms per frame. Engine-only
+  # integration (no libc override); see rpmalloc.c.
+  #
+  # iOS deliberately stays on the system allocator: replacing operator new
+  # process-wide is active from the first static initializer, and under
+  # LiveContainer (where the app runs as a guest inside another process) the
+  # post-June binaries with rpmalloc die before main. libmalloc is also the
+  # least-bad of the three system allocators, so the win was smallest there.
+  if(NOT STAR_SYSTEM STREQUAL "ios")
+    set(STAR_USE_RPMALLOC ON)
+  endif()
+elseif(STAR_SYSTEM_FAMILY STREQUAL "unix")
+  set_flag(STAR_SYSTEM_FAMILY_UNIX)
+endif()
+
+# STAR_PLATFORM_MOBILE selects the oSBM app path (launcher + touch/gamepad
+# adapters + mobile platform services). It is intentionally DECOUPLED from
+# STAR_SYSTEM_FAMILY_MOBILE (the "is a real mobile device" flag set above):
+# a desktop build can opt into the app path via STAR_PC_MOBILE_LAUNCHER while
+# keeping the PC renderer/allocator/GUI-lib branches (which key off the family
+# and per-system macros, not this one). On real mobile devices the family is
+# "mobile" so this is on regardless of the option.
+if(STAR_SYSTEM_FAMILY STREQUAL "mobile" OR STAR_PC_MOBILE_LAUNCHER)
+  set_flag(STAR_PLATFORM_MOBILE)
+endif()
+if(NOT STAR_SYSTEM_FAMILY STREQUAL "mobile")
+  set_flag(STAR_PLATFORM_PC)
+endif()
+
+if(STAR_COMPILER STREQUAL "gnu")
+  set_flag(STAR_COMPILER_GNU)
+elseif(STAR_COMPILER STREQUAL "clang")
+  set_flag(STAR_COMPILER_CLANG)
+elseif(STAR_COMPILER STREQUAL "msvc")
+  set_flag(STAR_COMPILER_MSVC)
+endif()
+
+if(STAR_LUA_APICHECK)
+  add_definitions(-DLUA_USE_APICHECK)
+endif()
+
+if(STAR_SYSTEM_WINDOWS)
+  # LUA_USE_WINDOWS is automatically defined in luaconf if _WIN32 is defined
+elseif(STAR_SYSTEM_MACOS)
+  add_definitions(-DLUA_USE_MACOSX)
+elseif(STAR_SYSTEM_LINUX)
+  add_definitions(-DLUA_USE_LINUX)
+elseif(STAR_SYSTEM_ANDROID OR STAR_SYSTEM_IOS)
+  add_definitions(-DLUA_USE_POSIX)
+elseif(STAR_SYSTEM_FAMILY_UNIX)
+  add_definitions(-DLUA_USE_POSIX)
+endif()
+
+if(STAR_SYSTEM_SWITCH)
+  # devkitA64's newlib does not expose LLONG_MAX/LLONG_MIN through <limits.h> in
+  # C++ mode (only via <climits>), which trips Lua's 64-bit integer check when
+  # lua.h is pulled into C++ translation units. Supply them from the always-available
+  # compiler builtin. The default (non-POSIX) Lua path is used so it relies on the
+  # standard setjmp/longjmp rather than the BSD _setjmp/_longjmp newlib lacks.
+  add_definitions("-DLLONG_MAX=__LONG_LONG_MAX__" "-DLLONG_MIN=(-__LONG_LONG_MAX__-1LL)")
+endif()
+
+if(STAR_ENABLE_STEAM_INTEGRATION)
+  add_definitions(-DSTAR_ENABLE_STEAM_INTEGRATION)
+endif()
+
+if(STAR_ENABLE_DISCORD_INTEGRATION)
+  add_definitions(-DSTAR_ENABLE_DISCORD_INTEGRATION)
+endif()
+
+if(STAR_USE_JEMALLOC)
+  add_definitions(-DSTAR_USE_JEMALLOC)
+elseif(STAR_USE_MIMALLOC)
+  add_definitions(-DSTAR_USE_MIMALLOC)
+elseif(STAR_USE_RPMALLOC)
+  add_definitions(-DSTAR_USE_RPMALLOC -DENABLE_PRELOAD)
+endif()
+
+# Set C/C++ compiler flags based on build environment...
+
+if(STAR_COMPILER_GNU)
+  if(STAR_SYSTEM_SWITCH)
+    # The Switch (devkitA64) target is PIE-only and its GCC does not accept the
+    # desktop-oriented -rdynamic / -no-pie options. Use gnu++17 rather than
+    # c++17 so __STRICT_ANSI__ stays undefined and libnx's BSD socket types
+    # (u_short, sockaddr_in6, ...) remain visible.
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wno-unused -Wno-implicit-fallthrough")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++17 -Wall -Wextra -Wno-unused -Wno-implicit-fallthrough")
+    # CRITICAL: libnx registers the C++ exception unwinder's frame-search table
+    # from the ELF's .eh_frame_hdr (PT_GNU_EH_FRAME segment) during init. The
+    # custom CMake link (with switch.specs + --gc-sections) does NOT pass
+    # --eh-frame-hdr, so the linker emits an EMPTY .eh_frame_hdr. libnx then
+    # registers a header with zero FDEs, so the unwinder can never find a handler
+    # and EVERY thrown C++ exception aborts the process instead of being caught.
+    # That is the root cause of the load-time "freezes": the engine throws for
+    # all of its missing-content/error handling, and each throw was aborting.
+    # Force the linker to synthesize a populated .eh_frame_hdr.
+    add_link_options(-Wl,--eh-frame-hdr)
+  else()
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -rdynamic -Wall -Wextra -Wno-unused -Wno-implicit-fallthrough -no-pie")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -rdynamic -Wall -Wextra -Wno-unused -Wno-implicit-fallthrough -no-pie")
+  endif()
+
+  if(STAR_SYSTEM_FAMILY_WINDOWS)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mthreads")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mthreads")
+  else()
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pthread -D_REENTRANT")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -D_REENTRANT")
+  endif()
+
+  if(STAR_ENABLE_STATIC_LIBGCC_LIBSTDCXX)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -static-libgcc")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -static-libgcc -static-libstdc++")
+  endif()
+
+  if(STAR_ENABLE_GCC_PROFILING)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pg")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pg")
+  endif()
+
+  set(CMAKE_C_FLAGS_DEBUG "-g -Og")
+  set(CMAKE_CXX_FLAGS_DEBUG "-g -Og")
+
+  set(CMAKE_C_FLAGS_RELWITHASSERTS "-g -O3 -ffast-math")
+  set(CMAKE_CXX_FLAGS_RELWITHASSERTS "-g -O3 -ffast-math")
+
+  set(CMAKE_C_FLAGS_RELWITHDEBINFO "-g -DNDEBUG -O3 -ffast-math")
+  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-g -DNDEBUG -O3 -ffast-math")
+
+  set(CMAKE_C_FLAGS_RELEASE "-DNDEBUG -O3 -ffast-math")
+  set(CMAKE_CXX_FLAGS_RELEASE "-DNDEBUG -O3 -ffast-math")
+
+  set(CMAKE_SKIP_BUILD_RPATH TRUE)
+
+elseif(STAR_COMPILER_CLANG)
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wuninitialized -Wno-parentheses-equality -Wno-deprecated-declarations")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wall -Wextra -Wuninitialized -Wno-parentheses-equality -Wno-deprecated-declarations")
+
+  if(STAR_SYSTEM_MACOS)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++")
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-export_dynamic")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-export_dynamic")
+    set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LANGUAGE_STANDARD "c++17")
+    set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LIBRARY "libc++")
+  elseif()
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pthread -D_REENTRANT")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -D_REENTRANT")
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--export-dynamic")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--export-dynamic")
+  endif()
+
+  set(CMAKE_C_FLAGS_DEBUG "-g")
+  set(CMAKE_CXX_FLAGS_DEBUG "-g")
+
+  set(CMAKE_C_FLAGS_RELWITHASSERTS "-g -O3 -ffast-math")
+  set(CMAKE_CXX_FLAGS_RELWITHASSERTS "-g -O3 -ffast-math")
+
+  set(CMAKE_C_FLAGS_RELWITHDEBINFO "-gline-tables-only -gz=zlib -DNDEBUG -O3 -ffast-math")
+  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-gline-tables-only -gz=zlib -DNDEBUG -O3 -ffast-math")
+
+  set(CMAKE_C_FLAGS_RELEASE "-DNDEBUG -O3 -ffast-math")
+  set(CMAKE_CXX_FLAGS_RELEASE "-DNDEBUG -O3 -ffast-math")
+
+  set(CMAKE_SKIP_BUILD_RPATH TRUE)
+
+elseif(STAR_COMPILER_MSVC)
+  # /MP      - Multi-processor building
+  # /EHsc    - Enable normal C++ exception handling
+  # /bigobj  - More sections in .obj files (Cannot build in Debug without it)
+  # /MT      - Use multi-threaded statically linked C runtime library
+  # /GA      - Optimize for windows application
+  # /Ox      - Full optimization
+  # /fp:fast - Equivalent to -ffast-math
+  # /GS-     - Disable buffers security check
+  # /Zi      - Generates debugging information without Edit and Continue
+  # /Z7      - Like the above, but debugging information is stored per-object
+  # /Gy      - Use function-level linking
+  # /wd4996  - Disable warnings about unsafe C functions
+  # /wd4351  - Disable warnings about new behavior of default initialization of
+  #            arrays (which is the correct behavior anyway)
+  # /wd4800  - Disable warnings about using non-bool as true or false (useless
+  #            performance warning)
+  # /wd4244  - Disable warnings about type conversion loss of data, it's a nice
+  #            warning, but it triggers on lots and lots of harmless things that no
+  #            other compiler warns about, like passing an int as a float parameter
+  # /wd4305  - Disable warnings about truncation from double to float
+  # /wd4267  - Disable warnings about 64 - 32 bit truncation
+  # /wd4456  - Disable warnings about hiding previous local declaration
+  # /wd4503  - Silence warnings about MSVC generating a name so long it has to
+  #            truncate it
+  # /wd4250  - Silence "XX inherits YY via dominance"
+  # /wd4624  - Silence implicitly deleted destructor warnings that show up when
+  #            using unions in interesting ways.
+
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /nologo /MP /EHsc /bigobj /wd4996 /wd4351 /wd4800 /wd4244 /wd4305 /wd4267 /wd4456 /wd4503 /wd4250 /wd4624")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /nologo /std:c++17 /MP /EHsc /bigobj /wd4996 /wd4351 /wd4800 /wd4244 /wd4305 /wd4267 /wd4456 /wd4503 /wd4250 /wd4624")
+
+  if(STAR_ENABLE_STATIC_MSVC_RUNTIME)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /MT")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MT")
+  endif()
+
+  set(CMAKE_C_FLAGS_DEBUG "/Z7 /Od")
+  set(CMAKE_CXX_FLAGS_DEBUG "/Z7 /Od")
+
+  set(CMAKE_C_FLAGS_RELWITHASSERTS "/Ox /fp:fast /GA /GS- /Z7 /Gy")
+  set(CMAKE_CXX_FLAGS_RELWITHASSERTS "/Ox /fp:fast /GA /GS- /Z7 /Gy")
+
+  set(CMAKE_C_FLAGS_RELWITHDEBINFO "/Ox /fp:fast /GA /GS- /Z7 /Gy /DNDEBUG")
+  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "/Ox /fp:fast /GA /GS- /Z7 /Gy /DNDEBUG")
+
+  set(CMAKE_C_FLAGS_RELEASE "/Ox /fp:fast /GA /GS- /Gy /DNDEBUG")
+  set(CMAKE_CXX_FLAGS_RELEASE "/Ox /fp:fast /GA /GS- /Gy /DNDEBUG")
+
+  if(STAR_ARCHITECTURE_I386)
+    # Assume all 32 bit target cpus support MMX, SSE, and SSE2
+
+    set(CMAKE_C_FLAGS_RELWITHASSERTS "${CMAKE_C_FLAGS_RELWITHASSERTS} /arch:SSE2")
+    set(CMAKE_CXX_FLAGS_RELWITHASSERTS "${CMAKE_CXX_FLAGS_RELWITHASSERTS} /arch:SSE2")
+
+    set(CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_C_FLAGS_RELWITHDEBINFO} /arch:SSE2")
+    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /arch:SSE2")
+
+    set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /arch:SSE2")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /arch:SSE2")
+  endif()
+
+  add_definitions(/DUNICODE)
+  add_definitions(/D_UNICODE)
+  add_definitions(/DNOMINMAX)
+
+else()
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -pthread -D_REENTRANT")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wall -pthread -D_REENTRANT")
+
+  set(CMAKE_C_FLAGS_DEBUG "-g")
+  set(CMAKE_CXX_FLAGS_DEBUG "-g")
+
+  set(CMAKE_C_FLAGS_RELWITHASSERTS "-g -O2")
+  set(CMAKE_CXX_FLAGS_RELWITHASSERTS "-g -O2")
+
+  set(CMAKE_C_FLAGS_RELWITHDEBINFO "-DNDEBUG -g -O2")
+  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-DNDEBUG -g -O2")
+
+  set(CMAKE_C_FLAGS_RELEASE "$-DNDEBUG -O2")
+  set(CMAKE_CXX_FLAGS_RELEASE "-DNDEBUG -O2")
+
+endif()
+
+# Android release builds benefit from section GC and frame-pointer omission:
+# smaller binaries and modestly better codegen on low-end devices.
+if(STAR_SYSTEM_ANDROID AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+  add_compile_options(-ffunction-sections -fdata-sections -fomit-frame-pointer)
+  add_link_options(-Wl,--gc-sections)
+endif()
+
+# Set other global build settings based on environment...
+
+if(STAR_SYSTEM_MACOS)
+  set(CMAKE_MODULE_LINKER_FLAGS "-flat_namespace -undefined suppress")
+elseif(STAR_SYSTEM_WINDOWS)
+  set(CMAKE_RC_COMPILER_INIT windres)
+
+  enable_language(RC)
+  if(STAR_COMPILER STREQUAL "msvc")
+    set(CMAKE_RC_COMPILE_OBJECT "<CMAKE_RC_COMPILER> /fo <OBJECT> <SOURCE>")
+  else()
+    set(CMAKE_RC_COMPILE_OBJECT "<CMAKE_RC_COMPILER> <FLAGS> -O coff <DEFINES> -i <SOURCE> -o <OBJECT>")
+  endif()
+endif()
+
+if(STAR_COMPILER STREQUAL "msvc")
+  # /largeaddressaware - Make 32 bit build able to use 3GB addresses
+  # /OPT:REF           - Eliminates functions and data that are never referenced
+  # /OPT:ICF           - Performs identical COMDAT folding
+  # /PDBCompress       - Hint to windows that it should compress the resulting PDB files
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /largeaddressaware /OPT:REF /OPT:ICF /PDBCompress")
+
+  # Make sure RelWithAsserts has debugging enabled
+  set(CMAKE_EXE_LINKER_FLAGS_RELWITHASSERTS "${CMAKE_EXE_LINKER_FLAGS_RELWITHASSERTS} /DEBUG")
+endif()
+
+if(STAR_SYSTEM_WINDOWS)
+  set(CMAKE_C_STANDARD_LIBRARIES "${CMAKE_C_STANDARD_LIBRARIES} ws2_32.lib iphlpapi.lib shlwapi.lib dbghelp.lib")
+  set(CMAKE_CXX_STANDARD_LIBRARIES "${CMAKE_CXX_STANDARD_LIBRARIES} ws2_32.lib iphlpapi.lib shlwapi.lib dbghelp.lib")
+
+elseif(STAR_SYSTEM_LINUX)
+  set(CMAKE_C_STANDARD_LIBRARIES "${CMAKE_C_STANDARD_LIBRARIES} -lpthread -ldl -lrt")
+  set(CMAKE_CXX_STANDARD_LIBRARIES "${CMAKE_CXX_STANDARD_LIBRARIES} -lpthread -ldl -lrt")
+
+elseif(STAR_SYSTEM_FREEBSD)
+  set(CMAKE_C_STANDARD_LIBRARIES "${CMAKE_C_STANDARD_LIBRARIES} -lpthread -lrt")
+  set(CMAKE_CXX_STANDARD_LIBRARIES "${CMAKE_CXX_STANDARD_LIBRARIES} -lpthread -lrt")
+
+elseif(STAR_SYSTEM_NETBSD)
+  set(CMAKE_C_STANDARD_LIBRARIES "${CMAKE_C_STANDARD_LIBRARIES} -lpthread -lrt -lexecinfo")
+  set(CMAKE_CXX_STANDARD_LIBRARIES "${CMAKE_CXX_STANDARD_LIBRARIES} -lpthread -lrt -lexecinfo")
+
+endif()
+
+# Find all required external libraries, based on build settings...
+find_package(PkgConfig)
+
+if(STAR_USE_JEMALLOC)
+  pkg_check_modules(JEMALLOC REQUIRED IMPORTED_TARGET GLOBAL jemalloc)
+
+  set(STAR_EXT_LIBS PkgConfig::JEMALLOC)
+  if (STAR_SYSTEM_WINDOWS OR STAR_SYSTEM_MACOS)
+    set_flag(STAR_JEMALLOC_IS_PREFIXED)
+  endif()
+endif()
+
+if (STAR_USE_MIMALLOC)
+  find_package(mimalloc CONFIG REQUIRED)
+  set(STAR_EXT_LIBS ${STAR_EXT_LIBS} $<IF:$<TARGET_EXISTS:mimalloc-static>,mimalloc-static,mimalloc>)
+endif()
+
+find_package(ZLIB REQUIRED)
+find_package(PNG REQUIRED)
+find_package(Freetype REQUIRED)
+find_package(cpr CONFIG REQUIRED)
+if(STAR_SYSTEM_ANDROID)
+  pkg_check_modules(OPUS REQUIRED IMPORTED_TARGET GLOBAL opus)
+  set(STAR_OPUS_TARGET PkgConfig::OPUS)
+elseif(STAR_SYSTEM_SWITCH)
+  # devkitPro portlib .pc files carry a hardcoded /opt/devkitpro prefix, which
+  # breaks under a relocated (rootless) toolchain. Resolve opus directly so the
+  # paths come from CMAKE_FIND_ROOT_PATH instead of pkg-config.
+  find_path(SWITCH_OPUS_INCLUDE_DIR NAMES opus/opus.h REQUIRED)
+  find_library(SWITCH_OPUS_LIBRARY NAMES opus REQUIRED)
+  add_library(Opus::opus UNKNOWN IMPORTED)
+  set_target_properties(Opus::opus PROPERTIES
+    IMPORTED_LOCATION "${SWITCH_OPUS_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${SWITCH_OPUS_INCLUDE_DIR}")
+  set(STAR_OPUS_TARGET Opus::opus)
+else()
+  find_package(Opus CONFIG REQUIRED)
+  set(STAR_OPUS_TARGET Opus::opus)
+endif()
+find_package(OggVorbis REQUIRED)
+find_package(zstd CONFIG REQUIRED)
+find_package(re2 CONFIG REQUIRED)
+find_package(imgui CONFIG REQUIRED)
+include_directories(SYSTEM
+        ${FREETYPE_INCLUDE_DIRS}
+        ${OGGVORBIS_INCLUDE_DIR}
+)
+
+if(STAR_SYSTEM_SWITCH)
+  # On Switch, portlib headers (e.g. imgui.h pulled in by star_extern's
+  # imgui_lua_bindings) are only on the toolchain include path through imported
+  # targets. Make the portlibs include directory globally visible, matching how
+  # vcpkg exposes its include directory on the other platforms.
+  if(NOT DEFINED DEVKITPRO)
+    set(DEVKITPRO "$ENV{DEVKITPRO}")
+  endif()
+  include_directories(SYSTEM
+    "${DEVKITPRO}/portlibs/switch/include"
+    "${DEVKITPRO}/portlibs/switch/include/freetype2"
+  )
+endif()
+
+set(STAR_EXT_LIBS ${STAR_EXT_LIBS}
+        ZLIB::ZLIB
+        PNG::PNG
+    cpr::cpr
+    $<IF:$<TARGET_EXISTS:Freetype::Freetype>,Freetype::Freetype,freetype>
+    $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static>
+    ${STAR_OPUS_TARGET}
+    re2::re2
+    imgui::imgui
+    ${VORBISFILE_LIBRARY}
+    ${VORBIS_LIBRARY}
+    ${OGG_LIBRARY}
+)
+
+pkg_check_modules(PKG_WAYLAND "wayland-client>=1.18" wayland-egl wayland-cursor egl "xkbcommon>=0.5.0")
+if (PKG_WAYLAND_FOUND)
+  message(STATUS "Wayland was found")
+else()
+  message(STATUS "Wayland was not found")
+endif()
+
+if(STAR_SYSTEM_FAMILY STREQUAL "unix")
+  set_flag(STAR_USE_CPPTRACE)
+  find_package(cpptrace CONFIG REQUIRED)
+  set(STAR_EXT_LIBS ${STAR_EXT_LIBS} cpptrace::cpptrace)
+  message(STATUS "Using cpptrace")
+endif()
+
+if(STAR_BUILD_GUI)
+  find_package(SDL3 CONFIG REQUIRED)
+
+  set(STAR_EXT_GUI_LIBS
+    $<TARGET_NAME_IF_EXISTS:SDL3::SDL3main>
+    $<IF:$<TARGET_EXISTS:SDL3::SDL3>,SDL3::SDL3,SDL3::SDL3-static>
+  )
+
+  if(STAR_SYSTEM_ANDROID)
+    find_library(ANDROID_EGL_LIBRARY EGL REQUIRED)
+    find_library(ANDROID_GLESV3_LIBRARY GLESv3 REQUIRED)
+    set(STAR_EXT_GUI_LIBS ${STAR_EXT_GUI_LIBS}
+        ${ANDROID_EGL_LIBRARY}
+        ${ANDROID_GLESV3_LIBRARY}
+    )
+  elseif(STAR_SYSTEM_IOS)
+    find_library(IOS_OPENGLES_FRAMEWORK OpenGLES REQUIRED)
+    find_library(IOS_QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
+    find_library(IOS_UIKIT_FRAMEWORK UIKit REQUIRED)
+    find_library(IOS_FOUNDATION_FRAMEWORK Foundation REQUIRED)
+    find_library(IOS_UNIFORMTYPEIDENTIFIERS_FRAMEWORK UniformTypeIdentifiers)
+    find_library(IOS_MOBILECORESERVICES_FRAMEWORK MobileCoreServices)
+    set(STAR_EXT_GUI_LIBS ${STAR_EXT_GUI_LIBS}
+        ${IOS_OPENGLES_FRAMEWORK}
+        ${IOS_QUARTZCORE_FRAMEWORK}
+        ${IOS_UIKIT_FRAMEWORK}
+        ${IOS_FOUNDATION_FRAMEWORK}
+    )
+    if(IOS_UNIFORMTYPEIDENTIFIERS_FRAMEWORK)
+      set(STAR_EXT_GUI_LIBS ${STAR_EXT_GUI_LIBS}
+          ${IOS_UNIFORMTYPEIDENTIFIERS_FRAMEWORK}
+      )
+    endif()
+    if(IOS_MOBILECORESERVICES_FRAMEWORK)
+      set(STAR_EXT_GUI_LIBS ${STAR_EXT_GUI_LIBS}
+          ${IOS_MOBILECORESERVICES_FRAMEWORK}
+      )
+    endif()
+  elseif(STAR_SYSTEM_SWITCH)
+    # Nintendo Switch (libnx + mesa): OpenGL ES via the nouveau winsys.
+    # These static portlibs live under $DEVKITPRO/portlibs/switch/lib, which the
+    # Switch toolchain places on the link search path.
+    set(STAR_EXT_GUI_LIBS ${STAR_EXT_GUI_LIBS}
+        GLESv2
+        EGL
+        glapi
+        drm_nouveau
+    )
+  elseif(STAR_SYSTEM_FAMILY_MOBILE)
+    find_package(OpenGL REQUIRED)
+    set(STAR_EXT_GUI_LIBS ${STAR_EXT_GUI_LIBS}
+        ${OPENGL_LIBRARY}
+    )
+  else()
+    find_package(OpenGL REQUIRED)
+    find_package(GLEW REQUIRED)
+
+    include_directories(SYSTEM ${GLEW_INCLUDE_DIR})
+    # OPENGL_LIBRARIES (not the undocumented singular OPENGL_LIBRARY): on
+    # GLVND Linux it expands to libOpenGL + libGLX, and static GLEW needs the
+    # GLX half (glXGetProcAddressARB) at link time. GL must come AFTER the
+    # static GLEW archive: distros that default ld to --as-needed (Ubuntu)
+    # drop a shared GL listed before anything has referenced it, leaving
+    # GLEW's glX* undefined. Same value as before on Windows (opengl32) and
+    # macOS (OpenGL framework), where order is inert.
+    set(STAR_EXT_GUI_LIBS ${STAR_EXT_GUI_LIBS}
+        GLEW::glew_s
+        ${OPENGL_LIBRARIES}
+    )
+  endif()
+
+  if(STAR_SYSTEM_MACOS)
+    set(STAR_EXT_GUI_LIBS ${STAR_EXT_GUI_LIBS} "-framework CoreAudio")
+  endif()
+
+  if(STAR_ENABLE_STEAM_INTEGRATION)
+    find_package(SteamApi REQUIRED)
+    include_directories(SYSTEM ${STEAM_API_INCLUDE_DIR})
+    set(STAR_EXT_GUI_LIBS ${STAR_EXT_GUI_LIBS} ${STEAM_API_LIBRARY})
+  endif()
+
+  if(STAR_ENABLE_DISCORD_INTEGRATION)
+    find_package(DiscordApi REQUIRED)
+    set(STAR_EXT_GUI_LIBS ${STAR_EXT_GUI_LIBS} ${DISCORD_API_LIBRARY})
+  endif()
+endif()
+
+# Set basic build flags, include all the relevant source directories, based on
+# build settings...
+
+set(BUILD_SHARED_LIBS false)
+
+# First set output dir for the generic no-config case (e.g. macos / linux)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/../dist)
+
+# Second, set output dir for multi-config builds (e.g. msvc)
+foreach(OUTPUTCONFIG ${CMAKE_CONFIGURATION_TYPES})
+  string(TOUPPER ${OUTPUTCONFIG} OUTPUTCONFIG)
+  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${OUTPUTCONFIG} ${PROJECT_SOURCE_DIR}/../dist)
+endforeach(OUTPUTCONFIG CMAKE_CONFIGURATION_TYPES)
+
+# External code included with starbound source, which core depends on
+set(STAR_EXTERN_INCLUDES ${PROJECT_SOURCE_DIR}/extern)
+add_subdirectory(extern)
+
+# Core support code, not specific to starbound.
+set(STAR_CORE_INCLUDES
+    ${PROJECT_SOURCE_DIR}/core
+    ${PROJECT_SOURCE_DIR}/core/scripting
+)
+add_subdirectory(core)
+
+# Less general purpose code than core that is available to both the game and
+# application modules.
+set(STAR_BASE_INCLUDES
+    ${PROJECT_SOURCE_DIR}/base
+    ${PROJECT_SOURCE_DIR}/base/scripting
+)
+add_subdirectory(base)
+
+# Platform APIs that are implemented by the application module
+set(STAR_PLATFORM_INCLUDES ${PROJECT_SOURCE_DIR}/platform)
+add_subdirectory(platform)
+
+# Core game logic used by both server and client.
+set(STAR_GAME_INCLUDES
+    ${PROJECT_SOURCE_DIR}/game
+    ${PROJECT_SOURCE_DIR}/game/interfaces
+    ${PROJECT_SOURCE_DIR}/game/items
+    ${PROJECT_SOURCE_DIR}/game/objects
+    ${PROJECT_SOURCE_DIR}/game/scripting
+    ${PROJECT_SOURCE_DIR}/game/terrain
+  )
+add_subdirectory(game)
+
+# Googletest based tests
+option(BUILD_TESTING "Build test projects" OFF)
+if(BUILD_TESTING)
+  enable_testing()
+  add_subdirectory(test)
+endif()
+
+# Starbound stand-alone server.
+if(NOT STAR_SYSTEM_FAMILY STREQUAL "mobile")
+  add_subdirectory(server)
+endif()
+
+# cmdline utilities
+add_subdirectory(utility)
+
+if(STAR_BUILD_GUI)
+  # Handles creating windows, keyboard / mouse / joystick input, and the 2d
+  # rendering model.
+  set(STAR_APPLICATION_INCLUDES ${PROJECT_SOURCE_DIR}/application)
+  add_subdirectory(application)
+
+  # Rendering code not dependent on widget system
+  set(STAR_RENDERING_INCLUDES ${PROJECT_SOURCE_DIR}/rendering)
+  add_subdirectory(rendering)
+
+  # Panes and Widgets
+  set(STAR_WINDOWING_INCLUDES ${PROJECT_SOURCE_DIR}/windowing)
+  add_subdirectory(windowing)
+
+  # Client interface code
+  set(STAR_FRONTEND_INCLUDES ${PROJECT_SOURCE_DIR}/frontend)
+  add_subdirectory(frontend)
+
+  if(STAR_SYSTEM_ANDROID)
+    foreach(_star_obj_target IN ITEMS
+      star_extern
+      star_core
+      star_base
+      star_game
+      star_application
+      star_rendering
+      star_windowing
+      star_frontend
+    )
+      if(TARGET ${_star_obj_target})
+        set_target_properties(${_star_obj_target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+      endif()
+    endforeach()
+  endif()
+
+  # Starbound game / client
+  add_subdirectory(client)
+
+  if(STAR_SYSTEM_ANDROID)
+    set(STAR_ANDROID_HOST_DIR "${PROJECT_SOURCE_DIR}/application/mobile/android/host")
+    set(STAR_ANDROID_GRADLE_WRAPPER "${STAR_ANDROID_HOST_DIR}/gradlew")
+    set(STAR_ANDROID_GRADLE_WRAPPER_BAT "${STAR_ANDROID_HOST_DIR}/gradlew.bat")
+    set(STAR_ANDROID_GRADLE_USER_HOME "${CMAKE_BINARY_DIR}/.gradle")
+    set(STAR_ANDROID_APK_GRADLE_TASK ":app:assembleDebug")
+    if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo" OR CMAKE_BUILD_TYPE STREQUAL "RelWithAsserts" OR CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
+      set(STAR_ANDROID_APK_GRADLE_TASK ":app:assembleRelease")
+    endif()
+    file(GLOB STAR_ANDROID_SDL3_JAR_CANDIDATES
+      "${CMAKE_BINARY_DIR}/vcpkg_installed/*/share/java/SDL3/SDL3-*.jar"
+    )
+    list(FILTER STAR_ANDROID_SDL3_JAR_CANDIDATES EXCLUDE REGEX ".*-sources\\.jar$")
+    list(LENGTH STAR_ANDROID_SDL3_JAR_CANDIDATES STAR_ANDROID_SDL3_JAR_COUNT)
+    if(STAR_ANDROID_SDL3_JAR_COUNT GREATER 0)
+      list(GET STAR_ANDROID_SDL3_JAR_CANDIDATES 0 STAR_ANDROID_SDL3_JAR)
+    else()
+      set(STAR_ANDROID_SDL3_JAR "")
+    endif()
+
+    # The launch script is kept in a variable and expanded QUOTED below so its
+    # embedded semicolons survive (unquoted expansion would split it into list
+    # elements and hand bash/cmd a truncated script).
+    if(CMAKE_HOST_WIN32)
+      set(STAR_ANDROID_SHELL cmd /c)
+      set(STAR_ANDROID_GRADLE_SCRIPT
+        "if exist \"${STAR_ANDROID_GRADLE_WRAPPER_BAT}\" (call \"${STAR_ANDROID_GRADLE_WRAPPER_BAT}\" -p \"${STAR_ANDROID_HOST_DIR}\" ${STAR_ANDROID_APK_GRADLE_TASK}) else (gradle.bat -p \"${STAR_ANDROID_HOST_DIR}\" ${STAR_ANDROID_APK_GRADLE_TASK})"
+      )
+    else()
+      set(STAR_ANDROID_SHELL bash -lc)
+      set(STAR_ANDROID_GRADLE_SCRIPT
+        "if [ -z \"${JAVA_HOME}\" ]; then export JAVA_HOME=\"$(dirname \"$(dirname \"$(readlink -f \"$(command -v javac)\")\")\")\"; fi; if [ -x \"${STAR_ANDROID_GRADLE_WRAPPER}\" ]; then \"${STAR_ANDROID_GRADLE_WRAPPER}\" -p \"${STAR_ANDROID_HOST_DIR}\" ${STAR_ANDROID_APK_GRADLE_TASK}; elif command -v gradle >/dev/null 2>&1; then gradle -p \"${STAR_ANDROID_HOST_DIR}\" ${STAR_ANDROID_APK_GRADLE_TASK}; else echo \"Android packaging requires Gradle. Install 'gradle' or add a wrapper at ${STAR_ANDROID_GRADLE_WRAPPER}.\" >&2; exit 1; fi"
+      )
+    endif()
+
+    # Per-ABI APK: packages only the ABI this build tree targets. Gradle reads
+    # STAR_ANDROID_ABIS to set abiFilters and the output APK name.
+    add_custom_target(android_apk ALL
+      COMMAND ${CMAKE_COMMAND} -E env
+        ANDROID_NDK_HOME=$ENV{ANDROID_NDK_HOME}
+        ANDROID_SDK_ROOT=$ENV{ANDROID_SDK_ROOT}
+        GRADLE_USER_HOME=${STAR_ANDROID_GRADLE_USER_HOME}
+        STAR_SDL3_JAR=${STAR_ANDROID_SDL3_JAR}
+        STAR_ANDROID_ABIS=${CMAKE_ANDROID_ARCH_ABI}
+        ${STAR_ANDROID_SHELL} "${STAR_ANDROID_GRADLE_SCRIPT}"
+      DEPENDS starbound
+      WORKING_DIRECTORY "${STAR_ANDROID_HOST_DIR}"
+      COMMENT "Building Android APK (${STAR_ANDROID_APK_GRADLE_TASK}, ${CMAKE_ANDROID_ARCH_ABI})"
+      VERBATIM
+    )
+
+    # Universal APK: packages every ABI listed below into a single APK. The
+    # per-ABI libmain.so files must already exist in the host jniLibs tree, so
+    # build each android-*-release preset first; gradle fails with a clear
+    # error naming any ABI whose libmain.so is missing.
+    set(STAR_ANDROID_UNIVERSAL_ABIS "armeabi-v7a,arm64-v8a,x86_64" CACHE STRING
+      "Comma-separated ABI list packaged into the universal Android APK")
+    # Package from a clean slate: AGP's incremental packaging can fail when the
+    # requested ABI set changes between runs in the same app/build tree. Note
+    # this also removes previously packaged per-ABI APKs from the outputs dir.
+    string(REPLACE "${STAR_ANDROID_APK_GRADLE_TASK}" ":app:clean ${STAR_ANDROID_APK_GRADLE_TASK}"
+      STAR_ANDROID_GRADLE_SCRIPT_UNIVERSAL "${STAR_ANDROID_GRADLE_SCRIPT}")
+    add_custom_target(android_apk_universal
+      COMMAND ${CMAKE_COMMAND} -E env
+        ANDROID_NDK_HOME=$ENV{ANDROID_NDK_HOME}
+        ANDROID_SDK_ROOT=$ENV{ANDROID_SDK_ROOT}
+        GRADLE_USER_HOME=${STAR_ANDROID_GRADLE_USER_HOME}
+        STAR_SDL3_JAR=${STAR_ANDROID_SDL3_JAR}
+        STAR_ANDROID_ABIS=${STAR_ANDROID_UNIVERSAL_ABIS}
+        ${STAR_ANDROID_SHELL} "${STAR_ANDROID_GRADLE_SCRIPT_UNIVERSAL}"
+      DEPENDS starbound
+      WORKING_DIRECTORY "${STAR_ANDROID_HOST_DIR}"
+      COMMENT "Building universal Android APK (${STAR_ANDROID_APK_GRADLE_TASK}, ${STAR_ANDROID_UNIVERSAL_ABIS})"
+      VERBATIM
+    )
+  endif()
+
+  if(STAR_SYSTEM_SWITCH)
+    # Stage the launcher's bundled assets (lang files + fonts) into a romfs
+    # image so the Dear ImGui launcher can load them from romfs:/ at runtime,
+    # mirroring the bundled-asset sync the Android/iOS hosts perform.
+    set(STAR_SWITCH_ROMFS "${CMAKE_BINARY_DIR}/romfs")
+    set(STAR_SWITCH_BUNDLED "${STAR_SWITCH_ROMFS}/bundled_assets")
+    file(MAKE_DIRECTORY "${STAR_SWITCH_BUNDLED}")
+    file(COPY "${PROJECT_SOURCE_DIR}/application/mobile/android/host/app/src/main/assets/lang"
+         DESTINATION "${STAR_SWITCH_BUNDLED}")
+    file(COPY "${PROJECT_SOURCE_DIR}/../assets/opensb"
+         DESTINATION "${STAR_SWITCH_BUNDLED}")
+    # Also provide the launcher font at the preferred (top-level) path.
+    file(COPY "${PROJECT_SOURCE_DIR}/../assets/opensb/hobo.ttf"
+         DESTINATION "${STAR_SWITCH_BUNDLED}")
+
+    # Optionally embed a Starbound packed.pak directly into the NRO's romfs.
+    # When STAR_SWITCH_PACKED_PAK points at a packed.pak, the resulting .nro is
+    # fully self-contained: the launcher finds the game assets at
+    # romfs:/packed.pak and no in-launcher pak selection is required. The copy
+    # runs at build time with copy_if_different so a multi-gigabyte pak is not
+    # re-copied on every configure.
+    set(STAR_SWITCH_PACKED_PAK "" CACHE FILEPATH
+      "Optional path to a packed.pak to embed into the Switch NRO romfs (produces a self-contained .nro)")
+    if(STAR_SWITCH_PACKED_PAK)
+      if(NOT EXISTS "${STAR_SWITCH_PACKED_PAK}")
+        message(FATAL_ERROR "STAR_SWITCH_PACKED_PAK is set but the file does not exist: ${STAR_SWITCH_PACKED_PAK}")
+      endif()
+      message(STATUS "Embedding packed.pak into Switch NRO romfs: ${STAR_SWITCH_PACKED_PAK}")
+      add_custom_command(
+        OUTPUT "${STAR_SWITCH_ROMFS}/packed.pak"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${STAR_SWITCH_PACKED_PAK}" "${STAR_SWITCH_ROMFS}/packed.pak"
+        DEPENDS "${STAR_SWITCH_PACKED_PAK}"
+        COMMENT "Staging packed.pak into Switch romfs (self-contained .nro)"
+        VERBATIM)
+      add_custom_target(switch_bundle_pak DEPENDS "${STAR_SWITCH_ROMFS}/packed.pak")
+    elseif(EXISTS "${STAR_SWITCH_ROMFS}/packed.pak")
+      # STAR_SWITCH_PACKED_PAK is unset (possibly toggled off since a prior
+      # configure that DID set it) -- elf2nro packs everything under the romfs
+      # staging directory regardless of what CMake asked to copy this run, so
+      # a stale pak here would silently keep getting embedded. Remove it so
+      # unsetting the variable actually produces a non-self-contained .nro.
+      message(STATUS "Removing stale embedded packed.pak from Switch romfs (STAR_SWITCH_PACKED_PAK is unset): ${STAR_SWITCH_ROMFS}/packed.pak")
+      file(REMOVE "${STAR_SWITCH_ROMFS}/packed.pak")
+    endif()
+
+    # Generate application metadata and the final NRO via the devkitPro
+    # NintendoSwitch platform helpers (elf2nro + nacptool).
+    nx_generate_nacp("${CMAKE_BINARY_DIR}/oSBM.nacp"
+      NAME "OpenStarbound Mobile"
+      AUTHOR "OpenStarbound Mobile"
+      VERSION "${OSBM_VERSION}"
+    )
+    nx_create_nro(starbound
+      OUTPUT "${CMAKE_BINARY_DIR}/oSBM-${OSBM_VERSION}-switch.nro"
+      NACP "${CMAKE_BINARY_DIR}/oSBM.nacp"
+      ROMFS "${STAR_SWITCH_ROMFS}"
+    )
+
+    # Ensure the embedded pak is staged into the romfs before elf2nro packs it.
+    if(STAR_SWITCH_PACKED_PAK)
+      add_dependencies(starbound_nro switch_bundle_pak)
+    endif()
+  endif()
+
+  # Qt GUI tools
+  if(STAR_BUILD_QT_TOOLS)
+    add_subdirectory(json_tool)
+
+    if(STAR_ENABLE_STEAM_INTEGRATION)
+      add_subdirectory(mod_uploader)
+    endif()
+  endif()
+endif()

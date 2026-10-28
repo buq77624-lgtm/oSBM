@@ -1,0 +1,407 @@
+#pragma once
+
+#include "StarTextureAtlas.hpp"
+#include "StarRenderer.hpp"
+
+#if defined(STAR_SYSTEM_ANDROID) || defined(STAR_SYSTEM_IOS) || defined(STAR_SYSTEM_SWITCH)
+#if defined(STAR_SYSTEM_ANDROID) || defined(STAR_SYSTEM_SWITCH)
+#include <GLES3/gl3.h>
+#include <GLES3/gl32.h>
+#else
+#include <OpenGLES/ES3/gl.h>
+#include <OpenGLES/ES3/glext.h>
+#endif
+
+#ifndef GLEW_OK
+#define GLEW_OK 0
+#endif
+
+#ifndef GLEW_ERROR_NO_GLX_DISPLAY
+#define GLEW_ERROR_NO_GLX_DISPLAY 0
+#endif
+
+#ifndef GLEW_VERSION_2_0
+#define GLEW_VERSION_2_0 1
+#endif
+
+#ifndef GLEW_VERSION_4_0
+#define GLEW_VERSION_4_0 0
+#endif
+
+#ifndef GLEW_VERSION_4_3
+#define GLEW_VERSION_4_3 0
+#endif
+
+#ifndef GL_MULTISAMPLE
+#define GL_MULTISAMPLE 0x809D
+#endif
+
+#ifndef GL_BGR
+#define GL_BGR 0x80E0
+#endif
+
+#ifndef GL_BGRA
+#define GL_BGRA 0x80E1
+#endif
+
+#ifndef GL_TEXTURE_2D_MULTISAMPLE
+#define GL_TEXTURE_2D_MULTISAMPLE 0x9100
+#endif
+
+inline void glTexImage2DMultisample(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height, GLboolean fixedsamplelocations) {
+#if defined(STAR_SYSTEM_ANDROID) || defined(STAR_SYSTEM_SWITCH)
+  glTexStorage2DMultisample(target, samples, internalformat, width, height, fixedsamplelocations);
+#else
+  // Multisampled texture render targets are disabled on iOS in this renderer path.
+  (void)target;
+  (void)samples;
+  (void)internalformat;
+  (void)width;
+  (void)height;
+  (void)fixedsamplelocations;
+#endif
+}
+
+inline int glewInit() {
+  return GLEW_OK;
+}
+
+inline const GLubyte* glewGetErrorString(int) {
+  static const GLubyte kNoError[] = "GLEW shim: no error";
+  return kNoError;
+}
+#else
+#include "GL/glew.h"
+#endif
+
+namespace Star {
+
+STAR_CLASS(OpenGlRenderer);
+
+constexpr size_t FrameBufferCount = 1;
+
+// OpenGL 2.0 implementation of Renderer.  OpenGL context must be created and
+// active during construction, destruction, and all method calls.
+class OpenGlRenderer : public Renderer {
+public:
+  OpenGlRenderer();
+  ~OpenGlRenderer();
+
+  String rendererId() const override;
+  Vec2U screenSize() const override;
+
+  void loadConfig(Json const& config) override;
+  void loadEffectConfig(String const& name, Json const& effectConfig, StringMap<String> const& shaders) override;
+
+  void setEffectParameter(String const& parameterName, RenderEffectParameter const& parameter) override;
+  void setEffectScriptableParameter(String const& effectName, String const& parameterName, RenderEffectParameter const& parameter) override;
+  Maybe<RenderEffectParameter> getEffectScriptableParameter(String const& effectName, String const& parameterName) override;
+  Maybe<VariantTypeIndex> getEffectScriptableParameterType(String const& effectName, String const& parameterName) override;
+  void setEffectTexture(String const& textureName, ImageView const& image) override;
+
+  void setScissorRect(Maybe<RectI> const& scissorRect) override;
+
+  bool switchEffectConfig(String const& name) override;
+  void setFrameBufferBypass(String const& id, bool bypass) override;
+  void skipNextScreenClear() override;
+  bool switchFrameBuffer(String const& id) override;
+  void blitFrameBufferToCurrent(String const& id) override;
+  void compositeFrameBufferToCurrent(String const& id) override;
+  void clearCurrentFrameBuffer() override;
+  void switchToDefaultFrameBuffer() override;
+
+  bool beginPrimitiveRecording() override;
+  List<RecordedSegment> endPrimitiveRecording() override;
+  void playPrimitiveRecording(List<RecordedSegment> const& recording) override;
+
+  TexturePtr createTexture(Image const& texture, TextureAddressing addressing, TextureFiltering filtering) override;
+  void setSizeLimitEnabled(bool enabled) override;
+  void setMultiTexturingEnabled(bool enabled) override;
+  void setMultiSampling(unsigned multiSampling) override;
+  TextureGroupPtr createTextureGroup(TextureGroupSize size, TextureFiltering filtering) override;
+  RenderBufferPtr createRenderBuffer() override;
+
+  List<RenderPrimitive>& immediatePrimitives() override;
+  void render(RenderPrimitive primitive) override;
+  void renderBuffer(RenderBufferPtr const& renderBuffer, Mat3F const& transformation) override;
+
+  void flush(Mat3F const& transformation) override;
+
+  void setScreenSize(Vec2U screenSize);
+
+  // Pixel offset of the rendered viewport within the physical framebuffer.
+  // On mobile this is set to the platform safe-area insets so the game renders
+  // within the rounded-corner / cutout-free region. Defaults to (0, 0).
+  void setScreenOffset(Vec2U offset) { m_screenOffset = offset; }
+  Vec2U screenOffset() const { return m_screenOffset; }
+  // Full default-framebuffer size in pixels. Lets startFrame tell whether the
+  // viewport covers the whole surface: when it does not (iOS safe-area
+  // margins), the skip-clear fast path must not run or the uncovered margins
+  // accumulate stale pixels. (0,0) = unknown, treated as covered when the
+  // offset is zero (desktop/Switch behavior).
+  void setWindowSurfaceSize(Vec2U size) { m_windowSurfaceSize = size; }
+
+  // Physical-pixel size of the final viewport. This normally matches
+  // screenSize(), but mobile can render a smaller logical canvas and upscale it
+  // into the fullscreen safe area.
+  void setScreenViewportSize(Vec2U viewportSize);
+  Vec2U screenViewportSize() const { return m_screenViewportSize; }
+
+  // On iOS EAGL, FBO 0 is not the screen; SDL creates a custom FBO. Store it
+  // here so startFrame/finishFrame/blit all render to the right target.
+  void setScreenFramebuffer(GLuint fbo) { m_screenFbo = fbo; }
+  GLuint screenFramebuffer() const { return m_screenFbo; }
+
+  void startFrame();
+  void finishFrame();
+
+private:
+  struct GlTextureAtlasSet : public TextureAtlasSet<GLuint> {
+  public:
+    GlTextureAtlasSet(unsigned atlasNumCells);
+
+    GLuint createAtlasTexture(Vec2U const& size, PixelFormat pixelFormat) override;
+    void destroyAtlasTexture(GLuint const& glTexture) override;
+    void copyAtlasPixels(GLuint const& glTexture, Vec2U const& bottomLeft, Image const& image) override;
+
+    TextureFiltering textureFiltering;
+  };
+
+  struct GlTextureGroup : enable_shared_from_this<GlTextureGroup>, public TextureGroup {
+    GlTextureGroup(unsigned atlasNumCells);
+    ~GlTextureGroup();
+
+    TextureFiltering filtering() const override;
+    TexturePtr create(Image const& texture) override;
+
+    GlTextureAtlasSet textureAtlasSet;
+  };
+
+  struct GlTexture : public Texture {
+    virtual GLuint glTextureId() const = 0;
+    virtual Vec2U glTextureSize() const = 0;
+    virtual Vec2U glTextureCoordinateOffset() const = 0;
+  };
+
+  struct GlGroupedTexture : public GlTexture {
+    ~GlGroupedTexture();
+
+    Vec2U size() const override;
+    TextureFiltering filtering() const override;
+    TextureAddressing addressing() const override;
+
+    GLuint glTextureId() const override;
+    Vec2U glTextureSize() const override;
+    Vec2U glTextureCoordinateOffset() const override;
+
+    void incrementBufferUseCount();
+    void decrementBufferUseCount();
+
+    unsigned bufferUseCount = 0;
+    shared_ptr<GlTextureGroup> parentGroup;
+    GlTextureAtlasSet::TextureHandle parentAtlasTexture = nullptr;
+  };
+
+  struct GlLoneTexture : public GlTexture {
+    ~GlLoneTexture();
+
+    Vec2U size() const override;
+    TextureFiltering filtering() const override;
+    TextureAddressing addressing() const override;
+
+    GLuint glTextureId() const override;
+    Vec2U glTextureSize() const override;
+    Vec2U glTextureCoordinateOffset() const override;
+
+    GLuint textureId = 0;
+    Vec2U textureSize;
+    TextureAddressing textureAddressing = TextureAddressing::Clamp;
+    TextureFiltering textureFiltering = TextureFiltering::Nearest;
+    PixelFormat storedPixelFormat = PixelFormat::RGBA32;
+  };
+
+  struct GlPackedVertexData {
+    uint32_t textureIndex : 2;
+    uint32_t fullbright : 1;
+    uint32_t rX : 1;
+    uint32_t rY : 1;
+    uint32_t unused : 27;
+  };
+
+  struct GlRenderVertex {
+    Vec2F pos;
+    Vec2F uv;
+    Vec4B color;
+    union Packed {
+      uint32_t packed;
+      GlPackedVertexData vars;
+    } pack;
+  };
+
+  struct GlRenderBuffer : public RenderBuffer {
+    struct GlVertexBufferTexture {
+      GLuint texture;
+      Vec2U size;
+    };
+
+    struct GlVertexBuffer {
+      List<GlVertexBufferTexture> textures;
+      GLuint vertexBuffer = 0;
+      size_t vertexCount = 0;
+      size_t byteCapacity = 0;
+    };
+
+    GlRenderBuffer();
+    ~GlRenderBuffer();
+
+    void set(List<RenderPrimitive>& primitives) override;
+
+    RefPtr<GlTexture> whiteTexture;
+    ByteArray accumulationBuffer;
+
+    HashSet<TexturePtr> usedTextures;
+    List<GlVertexBuffer> vertexBuffers;
+    GLuint vertexArray = 0;
+
+    bool useMultiTexturing{true};
+  };
+
+  struct EffectParameter {
+    GLint parameterUniform = -1;
+    VariantTypeIndex parameterType = 0;
+    Maybe<RenderEffectParameter> parameterValue;
+  };
+
+  struct EffectTexture {
+    GLint textureUniform = -1;
+    unsigned textureUnit = 0;
+    TextureAddressing textureAddressing = TextureAddressing::Clamp;
+    TextureFiltering textureFiltering = TextureFiltering::Linear;
+    GLint textureSizeUniform = -1;
+    RefPtr<GlLoneTexture> textureValue;
+  };
+  
+  struct GlFrameBuffer : RefCounter {
+    GLuint id = 0;
+    RefPtr<GlLoneTexture> texture;
+
+    Json config;
+    bool blitted = false;
+    unsigned multisample = 0;
+    unsigned sizeDiv = 1;
+    // Fractional render-scale (e.g. 0.66 = render this framebuffer at 66% of screen
+    // resolution and upscale on blit). Used to relieve fill-rate-bound scenes; sizeDiv
+    // is integer-only so this gives finer control. Applied on top of sizeDiv.
+    float sizeMul = 1.0f;
+    // Don't clear this framebuffer at startFrame: its contents are reused
+    // across frames (e.g. the world background buffer, re-blitted on frames
+    // that skip re-rendering it). Content must be fully overdrawn whenever it
+    // IS re-rendered.
+    bool preserve = false;
+    // While this framebuffer is the render target, blending accumulates
+    // premultiplied color and correct coverage (blendFuncSeparate), so its
+    // contents can later be composited over another target as a translucent
+    // overlay (see compositeFrameBufferToCurrent). Implies an alpha-capable
+    // texture format (the default framebuffer format has NO alpha channel on
+    // most platforms, which would silently make the overlay fully opaque).
+    bool premultiplied = false;
+    GLenum textureFormat = 0; // set from premultiplied/platform default in ctor
+
+    GlFrameBuffer(Json const& config);
+    ~GlFrameBuffer();
+  };
+
+  class Effect {
+  public:
+    GLuint program = 0;
+    Json config;
+    StringMap<EffectParameter> parameters;
+    StringMap<EffectParameter> scriptables; // scriptable parameters which can be changed when the effect is not loaded
+    StringMap<EffectTexture> textures;
+
+    StringMap<GLuint> attributes;
+    StringMap<GLuint> uniforms;
+
+    GLuint getAttribute(String const& name);
+    GLuint getUniform(String const& name);
+    bool includeVBTextures;
+  };
+
+  static bool logGlErrorSummary(String prefix);
+  static void uploadTextureImage(PixelFormat pixelFormat, Vec2U size, uint8_t const* data, bool sameStorage = false);
+
+  
+  static RefPtr<GlLoneTexture> createGlTexture(ImageView const& image, TextureAddressing addressing, TextureFiltering filtering);
+
+  shared_ptr<GlRenderBuffer> createGlRenderBuffer();
+
+  void flushImmediatePrimitives(Mat3F const& transformation = Mat3F::identity());
+
+  void renderGlBuffer(GlRenderBuffer const& renderBuffer, Mat3F const& transformation);
+
+  void setupGlUniforms(Effect& effect, Vec2U screenSize);
+
+  RefPtr<OpenGlRenderer::GlFrameBuffer> getGlFrameBuffer(String const& id);
+  void blitGlFrameBuffer(RefPtr<OpenGlRenderer::GlFrameBuffer> const& frameBuffer);
+  void switchGlFrameBuffer(RefPtr<OpenGlRenderer::GlFrameBuffer> const& frameBuffer);
+
+  Vec2U m_screenSize = {0, 0};
+  Vec2U m_screenOffset = {0, 0};
+  Vec2U m_screenViewportSize = {0, 0};
+  Vec2U m_windowSurfaceSize = {0, 0};
+  GLuint m_screenFbo = 0;
+
+  GLuint m_program = 0;
+
+  GLint m_positionAttribute = -1;
+  GLint m_colorAttribute = -1;
+  GLint m_texCoordAttribute = -1;
+  GLint m_dataAttribute = -1;
+  List<GLint> m_textureUniforms = {};
+  List<GLint> m_textureSizeUniforms = {};
+  GLint m_screenSizeUniform = -1;
+  GLint m_vertexTransformUniform = -1;
+
+  Json m_config;
+
+  StringMap<Effect> m_effects;
+  Effect* m_currentEffect;
+
+  StringMap<RefPtr<GlFrameBuffer>> m_frameBuffers;
+
+  StringSet m_frameBufferBypass;
+  // Frame-pacing fence ring (mobile family; see finishFrame). Members so a
+  // renderer teardown/rebuild (return-to-launcher) can't leak stale syncs.
+  GLsync m_frameFences[2] = {nullptr, nullptr};
+  unsigned m_fenceIndex = 0;
+#ifdef STAR_SYSTEM_SWITCH
+  // GPU frame-time attribution via EXT_disjoint_timer_query (see start/
+  // finishFrame). Members, not statics, for the same relaunch-safety reason.
+  int m_gpuTimerState = 0; // 0 unchecked, 1 supported, -1 unsupported
+  GLuint m_gpuTimerQueries[3] = {0, 0, 0};
+  bool m_gpuTimerPending[3] = {false, false, false};
+  unsigned m_gpuTimerIndex = 0;
+  bool m_gpuTimerBegun = false;
+#endif
+
+  bool m_skipNextScreenClear = false;
+  RefPtr<GlFrameBuffer> m_currentFrameBuffer;
+
+  RefPtr<GlTexture> m_whiteTexture;
+
+  Maybe<RectI> m_scissorRect;
+
+  bool m_limitTextureGroupSize;
+  bool m_useMultiTexturing;
+  unsigned m_multiSampling; // if non-zero, is enabled and acts as sample count
+  List<shared_ptr<GlTextureGroup>> m_liveTextureGroups;
+
+  List<RenderPrimitive> m_immediatePrimitives;
+
+  // Primitive record/replay state (see Renderer::beginPrimitiveRecording).
+  bool m_recording = false;
+  List<RecordedSegment> m_recordingSegments;
+  shared_ptr<GlRenderBuffer> m_immediateRenderBuffer;
+};
+
+}

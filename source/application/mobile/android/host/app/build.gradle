@@ -1,0 +1,117 @@
+plugins {
+    id 'com.android.application'
+}
+
+def sdlJar = System.getenv("STAR_SDL3_JAR")
+def useExternalSdlJar = sdlJar != null && !sdlJar.isEmpty() && file(sdlJar).exists() && System.getenv("STAR_USE_EXTERNAL_SDL3_JAR") == "1"
+
+// Single source of truth for the release version: the VERSION file at the
+// repository root (also read by CMake and the CI workflows).
+def osbmVersionFile = new File(projectDir, "../../../../../../VERSION").canonicalFile
+def osbmVersion = osbmVersionFile.exists() ? osbmVersionFile.text.trim() : "0.0.0"
+def osbmVersionParts = (osbmVersion.tokenize('.') + ['0', '0', '0']).take(3).collect { it.isInteger() ? it.toInteger() : 0 }
+def osbmVersionCode = osbmVersionParts[0] * 10000 + osbmVersionParts[1] * 100 + osbmVersionParts[2]
+
+// ABIs to package, driven by the CMake android_apk / android_apk_universal
+// targets. Each android-*-release preset drops its libmain.so into
+// src/main/jniLibs/<abi>/ and requests only its own ABI here; the universal
+// target requests all of them.
+def osbmAbis = (System.getenv("STAR_ANDROID_ABIS") ?: "arm64-v8a").split(",")*.trim().findAll { !it.isEmpty() }
+def osbmMissingAbis = osbmAbis.findAll { !new File(projectDir, "src/main/jniLibs/${it}/libmain.so").exists() }
+if (!osbmMissingAbis.isEmpty()) {
+    throw new GradleException("Missing libmain.so for ABI(s): ${osbmMissingAbis.join(', ')}. " +
+        "Build the matching android-*-release CMake preset(s) first so each ABI's native library exists in src/main/jniLibs/.")
+}
+def osbmAbiSuffix = osbmAbis.size() > 1 ? "universal" : osbmAbis[0]
+
+android {
+    namespace 'com.devoflife.osbm.android'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.devoflife.osbm.android"
+        minSdk 26
+        targetSdk 34
+        versionCode osbmVersionCode
+        versionName osbmVersion
+
+        ndk {
+            osbmAbis.each { abiFilters it }
+        }
+    }
+
+    signingConfigs {
+        // The published releases have always been signed with the default
+        // debug key from this repo owner's machine, so that key IS the
+        // release identity -- rotating it would break every user's upgrade
+        // path. Resolve the keystore explicitly instead of via AGP's
+        // debug-config default: AGP silently REGENERATES a fresh random
+        // keystore when its resolved path is missing or unreadable (which is
+        // how CI runs kept minting unrelated signatures), while an explicit
+        // signingConfig with a bad file fails the build loudly. CI sets
+        // STAR_SIGNING_KEYSTORE to the restored keystore; local builds fall
+        // back to ~/.android/debug.keystore unchanged.
+        osbmRelease {
+            def envKeystore = System.getenv("STAR_SIGNING_KEYSTORE")
+            storeFile envKeystore ? new File(envKeystore) : new File("${System.properties['user.home']}/.android/debug.keystore")
+            storePassword "android"
+            keyAlias "androiddebugkey"
+            keyPassword "android"
+        }
+    }
+
+    buildTypes {
+        debug {
+            debuggable true
+            jniDebuggable true
+        }
+        release {
+            debuggable false
+            jniDebuggable false
+            signingConfig signingConfigs.osbmRelease
+            // Java shrinkers can rename JNI-bridge methods used from native code.
+            // Keep release deterministic until explicit keep-rules are introduced.
+            minifyEnabled false
+            shrinkResources false
+        }
+    }
+
+    packagingOptions {
+        jniLibs {
+            // Compress native libraries in APK to reduce distribution size.
+            useLegacyPackaging true
+        }
+    }
+
+    // Name APKs oSBM-<version>-android-<abi>.apk (or -universal for
+    // multi-ABI builds); debug builds get a -debug suffix.
+    applicationVariants.all { variant ->
+        variant.outputs.all {
+            def typeSuffix = variant.buildType.name == "release" ? "" : "-${variant.buildType.name}"
+            outputFileName = "oSBM-${osbmVersion}-android-${osbmAbiSuffix}${typeSuffix}.apk"
+        }
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['src/main/jniLibs']
+            assets.srcDirs = ['src/main/assets', '../../../../../../assets']
+            if (useExternalSdlJar) {
+                // Prevent duplicate classes when SDL Java glue is provided via JAR.
+                java {
+                    exclude 'org/libsdl/app/**'
+                }
+            }
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core:1.13.1'
+    implementation 'androidx.documentfile:documentfile:1.0.1'
+
+    if (useExternalSdlJar) {
+        // Prefer exact SDL Java glue from the matching vcpkg artifact.
+        implementation files(sdlJar)
+    }
+}

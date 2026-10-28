@@ -1,0 +1,211 @@
+#pragma once
+
+#include "StarVariant.hpp"
+#include "StarImage.hpp"
+#include "StarPoly.hpp"
+#include "StarJson.hpp"
+#include "StarBiMap.hpp"
+#include "StarRefPtr.hpp"
+
+namespace Star {
+
+STAR_EXCEPTION(RendererException, StarException);
+
+class Texture;
+typedef RefPtr<Texture> TexturePtr;
+
+STAR_CLASS(TextureGroup);
+STAR_CLASS(RenderBuffer);
+STAR_CLASS(Renderer);
+
+enum class TextureAddressing {
+  Clamp,
+  Wrap
+};
+extern EnumMap<TextureAddressing> const TextureAddressingNames;
+
+enum class TextureFiltering {
+  Nearest,
+  Linear
+};
+extern EnumMap<TextureFiltering> const TextureFilteringNames;
+
+// Medium is the maximum guaranteed texture group size
+// Where a Medium sized texture group is expected to fill a single page Large can be used,
+// but is not guaranteed to be supported by all systems.
+// Where Large sized textures are not supported, a Medium one is used
+enum class TextureGroupSize {
+  Small,
+  Medium,
+  Large
+};
+
+// Both screen coordinates and texture coordinates are in pixels from the
+// bottom left to top right.
+struct RenderVertex {
+  Vec2F screenCoordinate;
+  Vec2F textureCoordinate;
+  Vec4B color;
+  float param1;
+};
+
+class RenderTriangle {
+public:
+  RenderTriangle() = default;
+  RenderTriangle(Vec2F posA, Vec2F posB, Vec2F posC, Vec4B color = Vec4B::filled(255), float param1 = 0.0f);
+  RenderTriangle(TexturePtr tex, Vec2F posA, Vec2F uvA, Vec2F posB, Vec2F uvB, Vec2F posC, Vec2F uvC, Vec4B color = Vec4B::filled(255), float param1 = 0.0f);
+
+  TexturePtr texture;
+  RenderVertex a, b, c;
+};
+
+class RenderQuad {
+public:
+  RenderQuad() = default;
+  RenderQuad(Vec2F posA, Vec2F posB, Vec2F posC, Vec2F posD, Vec4B color = Vec4B::filled(255), float param1 = 0.0f);
+  RenderQuad(TexturePtr tex, Vec2F minScreen, float textureScale = 1.0f, Vec4B color = Vec4B::filled(255), float param1 = 0.0f);
+  RenderQuad(TexturePtr tex, RectF const& screenCoords, Vec4B color = Vec4B::filled(255), float param1 = 0.0f);
+  RenderQuad(TexturePtr tex, Vec2F posA, Vec2F uvA, Vec2F posB, Vec2F uvB, Vec2F posC, Vec2F uvC, Vec2F posD, Vec2F uvD, Vec4B color = Vec4B::filled(255), float param1 = 0.0f);
+  RenderQuad(TexturePtr tex, RenderVertex vA, RenderVertex vB, RenderVertex vC, RenderVertex vD);
+  RenderQuad(RectF const& rect, Vec4B color = Vec4B::filled(255), float param1 = 0.0f);
+
+  TexturePtr texture;
+  RenderVertex a, b, c, d;
+};
+
+class RenderPoly {
+public:
+  RenderPoly() = default;
+  RenderPoly(List<Vec2F> const& verts, Vec4B color, float param1 = 0.0f);
+
+  TexturePtr texture;
+  List<RenderVertex> vertexes;
+};
+
+RenderQuad renderTexturedRect(TexturePtr texture, Vec2F minScreen, float textureScale = 1.0f, Vec4B color = Vec4B::filled(255), float param1 = 0.0f);
+RenderQuad renderTexturedRect(TexturePtr texture, RectF const& screenCoords, Vec4B color = Vec4B::filled(255), float param1 = 0.0f);
+RenderQuad renderFlatRect(RectF const& rect, Vec4B color, float param1 = 0.0f);
+RenderPoly renderFlatPoly(PolyF const& poly, Vec4B color, float param1 = 0.0f);
+
+typedef Variant<RenderTriangle, RenderQuad, RenderPoly> RenderPrimitive;
+
+class Texture : public RefCounter {
+public:
+  virtual ~Texture() = default;
+
+  virtual Vec2U size() const = 0;
+  virtual TextureFiltering filtering() const = 0;
+  virtual TextureAddressing addressing() const = 0;
+};
+
+// Textures may be created individually, or in a texture group.  Textures in
+// a texture group will be faster to render when rendered together, and will
+// use less texture memory when many small textures are in a common group.
+// Texture groups must all have the same texture parameters, and will always
+// use clamped texture addressing.
+class TextureGroup {
+public:
+  virtual ~TextureGroup() = default;
+
+  virtual TextureFiltering filtering() const = 0;
+  virtual TexturePtr create(Image const& texture) = 0;
+};
+
+class RenderBuffer {
+public:
+  virtual ~RenderBuffer() = default;
+
+  // Transforms the given primitives into a form suitable for the underlying
+  // graphics system and stores it for fast replaying.
+  virtual void set(List<RenderPrimitive>& primitives) = 0;
+};
+
+typedef Variant<float, int, Vec4F, Vec3F, Vec2F, bool> RenderEffectParameter;
+
+class Renderer {
+public:
+  virtual ~Renderer() = default;
+
+  virtual String rendererId() const = 0;
+  virtual Vec2U screenSize() const = 0;
+
+  virtual void loadConfig(Json const& config) = 0;
+
+  // The actual shaders used by this renderer will be in a default no effects
+  // state when constructed, but can be overridden here.  This config will be
+  // specific to each type of renderer, so it will be necessary to key the
+  // configuration off of the renderId string.  This should not be called every
+  // frame, because it will result in a recompile of the underlying shader set.
+  virtual void loadEffectConfig(String const& name, Json const& effectConfig, StringMap<String> const& shaders) = 0;
+
+  // The effect config will specify named parameters and textures which can be
+  // set here.
+  virtual void setEffectParameter(String const& parameterName, RenderEffectParameter const& parameter) = 0;
+  virtual void setEffectScriptableParameter(String const& effectName, String const& parameterName, RenderEffectParameter const& parameter) = 0;
+  virtual Maybe<RenderEffectParameter> getEffectScriptableParameter(String const& effectName, String const& parameterName) = 0;
+  virtual Maybe<VariantTypeIndex> getEffectScriptableParameterType(String const& effectName, String const& parameterName) = 0;
+  virtual void setEffectTexture(String const& textureName, ImageView const& image) = 0;
+  virtual bool switchEffectConfig(String const& name) = 0;
+
+  // Temporarily redirect rendering into a named framebuffer without changing
+  // the current effect (shader/uniform state is untouched). Returns false if
+  // no framebuffer with this id exists, in which case rendering continues
+  // into the current target unchanged. Used to draw low-frequency content
+  // (e.g. sky/background layers) into a reduced-resolution buffer.
+  virtual bool switchFrameBuffer(String const& id) { return false; }
+  virtual void setFrameBufferBypass(String const&, bool) {}
+  // Skip the next startFrame screen clear (caller guarantees full coverage).
+  virtual void skipNextScreenClear() {}
+  // Stretch-blit a named framebuffer's contents over the currently bound
+  // framebuffer (no blending, linear filtered when sizes differ).
+  virtual void blitFrameBufferToCurrent(String const& id) {}
+  // Alpha-composite a named framebuffer over the current render target as a
+  // premultiplied-alpha overlay quad. The source framebuffer must have been
+  // rendered with the "premultiplied" config flag (its blend accumulates
+  // premultiplied color + correct coverage) over a transparent clear.
+  virtual void compositeFrameBufferToCurrent(String const& id) {}
+  // Clear the currently bound framebuffer to transparent black immediately
+  // (independent of the startFrame clears, e.g. for "preserve" buffers that
+  // are explicitly refreshed).
+  virtual void clearCurrentFrameBuffer() {}
+  // Rebind the default (screen) render target after switchFrameBuffer.
+  virtual void switchToDefaultFrameBuffer() {}
+
+  // Any further rendering will be scissored based on this rect, specified in
+  // pixels
+  virtual void setScissorRect(Maybe<RectI> const& scissorRect) = 0;
+
+  virtual TexturePtr createTexture(Image const& texture,
+      TextureAddressing addressing = TextureAddressing::Clamp,
+      TextureFiltering filtering = TextureFiltering::Nearest) = 0;
+  virtual void setSizeLimitEnabled(bool enabled) = 0;
+  virtual void setMultiTexturingEnabled(bool enabled) = 0;
+  virtual void setMultiSampling(unsigned multiSampling) = 0;
+  virtual TextureGroupPtr createTextureGroup(TextureGroupSize size = TextureGroupSize::Medium, TextureFiltering filtering = TextureFiltering::Nearest) = 0;
+  virtual RenderBufferPtr createRenderBuffer() = 0;
+
+  virtual List<RenderPrimitive>& immediatePrimitives() = 0;
+  virtual void render(RenderPrimitive primitive) = 0;
+  virtual void renderBuffer(RenderBufferPtr const& renderBuffer, Mat3F const& transformation = Mat3F::identity()) = 0;
+
+  virtual void flush(Mat3F const& transformation = Mat3F::identity()) = 0;
+
+  // Primitive record/replay: capture every immediate-mode primitive submitted
+  // between begin/end (together with the scissor state it was submitted
+  // under, since UI rendering changes the scissor per widget) so the exact
+  // same output can be replayed later without re-running the code that
+  // generated it. The recording pass still draws normally. Replay is only
+  // exact for content submitted with the identity flush transformation (true
+  // for all UI rendering, which is the intended use). Backends may not
+  // support this; beginPrimitiveRecording() returning false means the caller
+  // should just render normally every time.
+  struct RecordedSegment {
+    Maybe<RectI> scissor;
+    List<RenderPrimitive> primitives;
+  };
+  virtual bool beginPrimitiveRecording() { return false; }
+  virtual List<RecordedSegment> endPrimitiveRecording() { return {}; }
+  virtual void playPrimitiveRecording(List<RecordedSegment> const& recording) {}
+};
+
+}
