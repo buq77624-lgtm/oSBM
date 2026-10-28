@@ -58,6 +58,9 @@
 #include "StarInspectionTool.hpp"
 #include "StarQuestTracker.hpp"
 #include "StarContainerInteractor.hpp"
+#include "StarDamageBarEntity.hpp"
+#include "StarMaterialDatabase.hpp"
+#include "StarWorldClient.hpp"
 #include "StarChatBubbleManager.hpp"
 #include "StarNpc.hpp"
 #include "StarCharSelection.hpp"
@@ -345,6 +348,17 @@ bool MainInterface::handleInputEvent(InputEvent const& event) {
       effectiveEvent = MouseWheelEvent{mouseWheel->mouseWheel, m_cursorScreenPos};
   }
 
+  if (auto keyDown = effectiveEvent.ptr<KeyDownEvent>()) {
+    if (keyDown->key == Key::Pause) {
+      m_paneManager.toggleRegisteredPane(MainInterfacePanes::EscapeDialog);
+      return true;
+    }
+    if (keyDown->key == Key::F8) {
+      toggleSmartAim();
+      return true;
+    }
+  }
+
   if (m_paneManager.sendInputEvent(effectiveEvent)) {
     if (!effectiveEvent.is<MouseButtonUpEvent>() && !effectiveEvent.is<KeyUpEvent>())
       return true;
@@ -594,8 +608,11 @@ void MainInterface::handleInteractAction(InteractAction interactAction) {
 
 void MainInterface::preUpdate(float) {
   auto player = m_client->mainPlayer();
-  if (!m_client->paused())
-    player->aim(cursorWorldPosition());
+  if (!m_client->paused()) {
+    Vec2F rawAim = m_worldPainter->camera().screenToWorld(m_cursorScreenPos);
+    Vec2F aim = m_smartAimActive ? computeSmartAim(rawAim) : rawAim;
+    player->aim(aim);
+  }
 
   if (m_paneManager.topPane({PaneLayer::Window, PaneLayer::ModalWindow}))
     player->setBusyState(PlayerBusyState::Menu);
@@ -991,6 +1008,7 @@ void MainInterface::setCursorDrawnSeparately(bool separate) {
 void MainInterface::renderCursorOverlay() {
   if (m_disableHud)
     return;
+  renderSmartAimReticle();
   renderCursor();
   m_guiContext->clearTextStyle();
 }
@@ -1061,8 +1079,10 @@ void MainInterface::render() {
   miLap(s_miWindows);
 #endif
   renderActionWheel();
-  if (!m_cursorDrawnSeparately)
+  if (!m_cursorDrawnSeparately) {
+    renderSmartAimReticle();
     renderCursor();
+  }
   m_hudRenderedPanesVersion = m_paneManager.displayedPanesVersion();
 #ifdef STAR_SYSTEM_SWITCH
   miLap(s_miRest);
@@ -1076,7 +1096,178 @@ void MainInterface::render() {
 #endif
 }
 
+void MainInterface::toggleSmartAim() {
+  m_smartAimActive = !m_smartAimActive;
+  if (!m_smartAimActive) {
+    m_smartAimHasTarget = false;
+    m_smartAimType = SmartAimTargetType::None;
+  }
+  if (m_chat)
+    m_chat->addLine(strf("^#00e5ff;[自瞄/智能光标] 已{}", m_smartAimActive ? "^green;开启" : "^red;关闭"));
+}
+
+Vec2F MainInterface::computeSmartAim(Vec2F const& rawAimPos) {
+  m_smartAimHasTarget = false;
+  m_smartAimType = SmartAimTargetType::None;
+
+  if (!m_client)
+    return rawAimPos;
+  auto world = m_client->worldClient();
+  auto player = m_client->mainPlayer();
+  if (!world || !player)
+    return rawAimPos;
+
+  Vec2F playerPos = player->position();
+  Vec2F aimOffset = world->geometry().diff(rawAimPos, playerPos);
+  float aimDist = aimOffset.magnitude();
+  Vec2F aimDir = (aimDist > 0.001f) ? (aimOffset / aimDist) : Vec2F(player->facingDirection() == Direction::Right ? 1.0f : -1.0f, 0.0f);
+
+  // 1. Hostile enemy / PVP aimbot
+  float enemySearchRadius = 24.0f;
+  RectF enemyQueryRect = RectF::withCenter(playerPos, Vec2F::filled(enemySearchRadius * 2.0f));
+  shared_ptr<DamageBarEntity> bestEnemy;
+  float bestEnemyScore = 1e9f;
+
+  for (auto const& entity : world->query<DamageBarEntity>(enemyQueryRect)) {
+    if (entity == player)
+      continue;
+    if (entity->damageBar() != DamageBarType::Default && entity->damageBar() != DamageBarType::Special)
+      continue;
+    if (entity->getTeam().type != TeamType::Enemy && entity->getTeam().type != TeamType::PVP)
+      continue;
+
+    Vec2F entPos = entity->position();
+    Vec2F toEnt = world->geometry().diff(entPos, playerPos);
+    float d = toEnt.magnitude();
+    if (d > enemySearchRadius)
+      continue;
+
+    Vec2F toCursor = world->geometry().diff(entPos, rawAimPos);
+    float cursorDist = toCursor.magnitude();
+    float dot = (d > 0.001f) ? (toEnt[0] * aimDir[0] + toEnt[1] * aimDir[1]) / d : 0.0f;
+    float score = cursorDist - (dot > 0.0f ? dot * 6.0f : -dot * 10.0f);
+    if (score < bestEnemyScore) {
+      bestEnemyScore = score;
+      bestEnemy = entity;
+    }
+  }
+
+  if (bestEnemy && bestEnemyScore < 16.0f) {
+    m_smartAimType = SmartAimTargetType::Enemy;
+    m_smartAimTargetPos = bestEnemy->position();
+    m_smartAimHasTarget = true;
+    return m_smartAimTargetPos;
+  }
+
+  // 2. Terraria-style smart cursor for matter manipulator & mining
+  float maxReach = std::max(12.0f, player->toolRadius());
+  Vec2I rawAimTile = Vec2I::floor(rawAimPos);
+  Vec2I bestTile = rawAimTile;
+  bool foundTile = false;
+  float bestTileDist = 1e9f;
+
+  for (int dy = -2; dy <= 2; ++dy) {
+    for (int dx = -2; dx <= 2; ++dx) {
+      Vec2I tPos = rawAimTile + Vec2I(dx, dy);
+      Vec2F tCenter = Vec2F(tPos) + Vec2F(0.5f, 0.5f);
+      if (world->geometry().diff(tCenter, playerPos).magnitude() > maxReach)
+        continue;
+      if (world->isTileProtected(tPos))
+        continue;
+
+      MaterialId fgMat = world->material(tPos, TileLayer::Foreground);
+      MaterialId bgMat = world->material(tPos, TileLayer::Background);
+      bool isFg = isRealMaterial(fgMat);
+      bool isBg = isRealMaterial(bgMat);
+
+      if (isFg || isBg) {
+        float dist = (tCenter - rawAimPos).magnitude();
+        if (isFg)
+          dist -= 1.0f;
+        if (isRealMod(world->mod(tPos, TileLayer::Foreground)))
+          dist -= 1.5f;
+
+        if (dist < bestTileDist) {
+          bestTileDist = dist;
+          bestTile = tPos;
+          foundTile = true;
+        }
+      }
+    }
+  }
+
+  if (!foundTile) {
+    float step = 0.5f;
+    for (float d = 1.5f; d <= maxReach; d += step) {
+      Vec2F checkPos = playerPos + aimDir * d;
+      Vec2I tPos = Vec2I::floor(checkPos);
+      if (world->isTileProtected(tPos))
+        continue;
+      MaterialId fgMat = world->material(tPos, TileLayer::Foreground);
+      if (isRealMaterial(fgMat)) {
+        bestTile = tPos;
+        foundTile = true;
+        break;
+      }
+    }
+  }
+
+  if (foundTile) {
+    m_smartAimType = SmartAimTargetType::Tile;
+    m_smartAimTargetPos = Vec2F(bestTile) + Vec2F(0.5f, 0.5f);
+    m_smartAimHasTarget = true;
+    return m_smartAimTargetPos;
+  }
+
+  return rawAimPos;
+}
+
+void MainInterface::renderSmartAimReticle() {
+  if (!m_smartAimActive || !m_smartAimHasTarget || m_disableHud)
+    return;
+  if (!m_client || !m_client->worldClient() || !m_worldPainter)
+    return;
+
+  Vec2F screenPos = m_worldPainter->camera().worldToScreen(m_smartAimTargetPos);
+  float s = interfaceScale();
+
+  if (m_smartAimType == SmartAimTargetType::Tile) {
+    float tileSize = 8.0f * m_worldPainter->camera().pixelRatio();
+    float halfTile = tileSize * 0.5f;
+    float x0 = screenPos[0] - halfTile;
+    float y0 = screenPos[1] - halfTile;
+    float x1 = screenPos[0] + halfTile;
+    float y1 = screenPos[1] + halfTile;
+    float corner = std::max(3.0f, halfTile * 0.4f);
+
+    Vec4B glowCyan(0, 240, 255, 230);
+    m_guiContext->drawInterfaceLine(Vec2F(x0, y1), Vec2F(x0 + corner, y1), glowCyan, 2.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(x0, y1), Vec2F(x0, y1 - corner), glowCyan, 2.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(x1, y1), Vec2F(x1 - corner, y1), glowCyan, 2.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(x1, y1), Vec2F(x1, y1 - corner), glowCyan, 2.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(x0, y0), Vec2F(x0 + corner, y0), glowCyan, 2.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(x0, y0), Vec2F(x0, y0 + corner), glowCyan, 2.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(x1, y0), Vec2F(x1 - corner, y0), glowCyan, 2.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(x1, y0), Vec2F(x1, y0 + corner), glowCyan, 2.0f);
+  } else if (m_smartAimType == SmartAimTargetType::Enemy) {
+    Vec4B lockRed(255, 60, 60, 240);
+    float r = 14.0f * s;
+    float gap = 4.0f * s;
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] - r, screenPos[1]), Vec2F(screenPos[0] - gap, screenPos[1]), lockRed, 2.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] + gap, screenPos[1]), Vec2F(screenPos[0] + r, screenPos[1]), lockRed, 2.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0], screenPos[1] - r), Vec2F(screenPos[0], screenPos[1] - gap), lockRed, 2.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0], screenPos[1] + gap), Vec2F(screenPos[0], screenPos[1] + r), lockRed, 2.0f);
+
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] - gap, screenPos[1] - gap), Vec2F(screenPos[0] + gap, screenPos[1] - gap), lockRed, 1.5f);
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] + gap, screenPos[1] - gap), Vec2F(screenPos[0] + gap, screenPos[1] + gap), lockRed, 1.5f);
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] + gap, screenPos[1] + gap), Vec2F(screenPos[0] - gap, screenPos[1] + gap), lockRed, 1.5f);
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] - gap, screenPos[1] + gap), Vec2F(screenPos[0] - gap, screenPos[1] - gap), lockRed, 1.5f);
+  }
+}
+
 Vec2F MainInterface::cursorWorldPosition() const {
+  if (m_smartAimActive && m_smartAimHasTarget)
+    return m_smartAimTargetPos;
   return m_worldPainter->camera().screenToWorld(m_cursorScreenPos);
 }
 

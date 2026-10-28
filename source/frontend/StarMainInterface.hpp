@@ -191,6 +191,16 @@ private:
   void updateCursor();
   void renderCursor();
 
+  enum class SmartAimTargetType {
+    None,
+    Tile,
+    Enemy
+  };
+
+  void toggleSmartAim();
+  Vec2F computeSmartAim(Vec2F const& rawAimPos);
+  void renderSmartAimReticle();
+
   bool overButton(PolyI const& buttonPoly, Vec2F const& mousePos) const;
 
   bool overlayClick(Vec2F const& mousePos, MouseButton mouseButton);
@@ -295,6 +305,11 @@ private:
   Maybe<size_t> m_actionWheelSelection;
   Vec2F m_actionWheelDirection;
   bool m_mobileDirectionalAimActive = false;
+
+  bool m_smartAimActive = true;
+  SmartAimTargetType m_smartAimType = SmartAimTargetType::None;
+  Vec2F m_smartAimTargetPos{};
+  bool m_smartAimHasTarget = false;
 
   String m_lastCommand;
 

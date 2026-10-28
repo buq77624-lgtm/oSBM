@@ -26,7 +26,9 @@ GraphicsMenu::GraphicsMenu(PaneManager* manager,UniverseClientPtr client)
         applyWindowSettings();
       });
   reader.registerCallback("resSlider", [=](Widget*) {
-      Vec2U res = m_resList[fetchChild<SliderBarWidget>("resSlider")->val()];
+      size_t index = fetchChild<SliderBarWidget>("resSlider")->val();
+      if (index >= m_resList.size()) index = m_resList.size() - 1;
+      Vec2U res = m_resList[index];
       m_localChanges.set("fullscreenResolution", jsonFromVec2U(res));
 #if STAR_SYSTEM_ANDROID || STAR_SYSTEM_IOS
       // On mobile the physical window always stays fullscreen, so the
@@ -122,7 +124,24 @@ GraphicsMenu::GraphicsMenu(PaneManager* manager,UniverseClientPtr client)
   Json paneLayout = config.get("paneLayout");
 
   m_interfaceScaleList = jsonToFloatList(assets->json("/interface/windowconfig/graphicsmenu.config:interfaceScaleList"));
+#if STAR_SYSTEM_ANDROID || STAR_SYSTEM_IOS
+  Vec2U physicalSize = GuiContext::singleton().windowSize();
+  if (physicalSize[0] < physicalSize[1])
+    std::swap(physicalSize[0], physicalSize[1]);
+  if (physicalSize[0] == 0 || physicalSize[1] == 0)
+    physicalSize = Vec2U{1920, 1080};
+
+  Vec2U res1080p;
+  if (physicalSize[1] > 1080) {
+    float s = 1080.0f / (float)physicalSize[1];
+    res1080p = Vec2U{(unsigned)std::round(physicalSize[0] * s), 1080};
+  } else {
+    res1080p = Vec2U{(unsigned)std::round(physicalSize[0] * 0.75f), (unsigned)std::round(physicalSize[1] * 0.75f)};
+  }
+  m_resList = { res1080p, physicalSize };
+#else
   m_resList = jsonToVec2UList(assets->json("/interface/windowconfig/graphicsmenu.config:resolutionList"));
+#endif
   m_zoomList = jsonToFloatList(assets->json("/interface/windowconfig/graphicsmenu.config:zoomList"));
   m_cameraSpeedList = jsonToFloatList(assets->json("/interface/windowconfig/graphicsmenu.config:cameraSpeedList"));
 
@@ -189,6 +208,23 @@ void GraphicsMenu::initConfig() {
 }
 
 void GraphicsMenu::syncGui() {
+#if STAR_SYSTEM_ANDROID || STAR_SYSTEM_IOS
+  Vec2U res = jsonToVec2U(m_localChanges.get("fullscreenResolution"));
+  auto resSlider = fetchChild<SliderBarWidget>("resSlider");
+  resSlider->setRange(0, 1, 1);
+  size_t selIndex = 1;
+  if (!m_resList.empty()) {
+    uint64_t curPix = (uint64_t)res[0] * res[1];
+    uint64_t res0Pix = (uint64_t)m_resList[0][0] * m_resList[0][1];
+    uint64_t res1Pix = m_resList.size() > 1 ? ((uint64_t)m_resList[1][0] * m_resList[1][1]) : res0Pix;
+    if (std::abs((int64_t)curPix - (int64_t)res0Pix) < std::abs((int64_t)curPix - (int64_t)res1Pix))
+      selIndex = 0;
+    else
+      selIndex = 1;
+  }
+  resSlider->setVal(selIndex, false);
+  fetchChild<LabelWidget>("resValueLabel")->setText(selIndex == 0 ? "1080p" : "原生");
+#else
   Vec2U res = jsonToVec2U(m_localChanges.get("fullscreenResolution"));
   auto resSlider = fetchChild<SliderBarWidget>("resSlider");
   auto resIt = std::lower_bound(m_resList.begin(), m_resList.end(), res, [&](Vec2U const& a, Vec2U const& b) {
@@ -202,6 +238,7 @@ void GraphicsMenu::syncGui() {
     resSlider->setVal(m_resList.size() - 1);
   }
   fetchChild<LabelWidget>("resValueLabel")->setText(strf("{}x{}", res[0], res[1]));
+#endif
 
   auto interfaceScaleSlider = fetchChild<SliderBarWidget>("interfaceScaleSlider");
   auto interfaceScale = m_localChanges.get("interfaceScale").optFloat().value();
