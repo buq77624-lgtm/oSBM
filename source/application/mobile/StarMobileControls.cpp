@@ -1178,6 +1178,7 @@ private:
         m_aimJoystickElementId = element.id;
         m_aimJoystickOrigin = center;
         m_aimJoystickCurrent = pos;
+        m_aimJoystickDownTimeMs = Time::monotonicMilliseconds();
         ensureAimTarget();
         updateAimJoystickFinger(state, pos);
         claimedControl = true;
@@ -1487,7 +1488,7 @@ private:
     setKeyOwner("joystick:up", Key::W, m_moveVec[1] < -0.30f);
     setKeyOwner("joystick:down", Key::S, m_moveVec[1] > 0.30f);
 
-    bool aimFiring = m_aimJoystickActive;
+    bool aimFiring = m_aimJoystickActive && (Time::monotonicMilliseconds() - m_aimJoystickDownTimeMs > 100);
     if (auto element = findElement(m_aimJoystickElementId)) {
       if (element->action.kind != MobileTouchActionKind::None)
         setAction(element->action, "aimJoystick:action", aimFiring);
@@ -2035,6 +2036,7 @@ private:
   Vec2F m_moveVec;
 
   bool m_aimJoystickActive = false;
+  int64_t m_aimJoystickDownTimeMs = 0;
   uint64_t m_aimJoystickFinger = 0;
   String m_aimJoystickElementId;
   Vec2F m_aimJoystickOrigin;

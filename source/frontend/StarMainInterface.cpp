@@ -1143,57 +1143,54 @@ Vec2F MainInterface::computeSmartAim(Vec2F const& rawAimPos) {
   }
 
   // ==========================================
-  // 1. 物质枪 / 采矿模式：彻底支持隔空自由拆方块
+  // 1. 物质枪 / 采矿建造模式：右摇杆跳跃选择方块与隔空拆除
   // ==========================================
   if (isMiningMode) {
-    float maxReach = std::max(16.0f, player->toolRadius());
-    Vec2F targetAim = rawAimPos;
-    if (aimDist > maxReach)
-      targetAim = playerPos + aimDir * maxReach;
+    int maxReachTiles = std::clamp((int)std::ceil(player->toolRadius() * 1.5f), 10, 18);
+    float maxReachWorld = (float)maxReachTiles;
+    Vec2I playerTile = Vec2I::floor(playerPos);
 
-    Vec2I aimTile = Vec2I::floor(targetAim);
-    Vec2I bestTile = aimTile;
-    bool foundTile = false;
-    float bestTileDist = 1e9f;
+    // 将轮盘拉动幅度映射为离散的方块步进距离（按格子跳跃，1 ~ maxReachTiles 格）
+    float clampedDist = std::clamp(aimDist, 1.0f, maxReachWorld);
+    int stepTiles = std::clamp((int)std::round(clampedDist), 1, maxReachTiles);
 
-    // 仅在玩家落点周围 ±1 格范围内检测是否有实体方块做网格对齐，绝不阻挡隔空深处方块！
+    // 沿瞄准方向以方块为单位步进选择目标格子
+    Vec2I targetTile = playerTile + Vec2I::round(aimDir * (float)stepTiles);
+
+    // 智能贴合实体方块：若目标周围 ±1 格有前景矿石或背景墙，优先跳跃锁定至该方块
+    Vec2I bestTile = targetTile;
+    bool foundSolid = false;
+    float bestSolidDist = 1e9f;
+
     for (int dy = -1; dy <= 1; ++dy) {
       for (int dx = -1; dx <= 1; ++dx) {
-        Vec2I tPos = aimTile + Vec2I(dx, dy);
-        Vec2F tCenter = Vec2F(tPos) + Vec2F(0.5f, 0.5f);
-        if (world->geometry().diff(tCenter, playerPos).magnitude() > maxReach)
+        Vec2I checkTile = targetTile + Vec2I(dx, dy);
+        Vec2F checkCenter = Vec2F(checkTile) + Vec2F(0.5f, 0.5f);
+        if (world->geometry().diff(checkCenter, playerPos).magnitude() > maxReachWorld)
           continue;
-        if (world->isTileProtected(tPos))
+        if (world->isTileProtected(checkTile))
           continue;
 
-        MaterialId fgMat = world->material(tPos, TileLayer::Foreground);
-        MaterialId bgMat = world->material(tPos, TileLayer::Background);
+        MaterialId fgMat = world->material(checkTile, TileLayer::Foreground);
+        MaterialId bgMat = world->material(checkTile, TileLayer::Background);
         if (isRealMaterial(fgMat) || isRealMaterial(bgMat)) {
-          float dist = (tCenter - targetAim).magnitude();
+          float d = (float)(std::abs(dx) + std::abs(dy));
           if (isRealMaterial(fgMat))
-            dist -= 0.25f;
-          if (dist < bestTileDist) {
-            bestTileDist = dist;
-            bestTile = tPos;
-            foundTile = true;
+            d -= 0.5f;
+          if (d < bestSolidDist) {
+            bestSolidDist = d;
+            bestTile = checkTile;
+            foundSolid = true;
           }
         }
       }
     }
 
-    if (foundTile && bestTileDist < 1.35f) {
-      m_smartAimType = SmartAimTargetType::Tile;
-      // 微调对齐到方块中心，高亮网格框
-      m_smartAimTargetPos = Vec2F(bestTile) + Vec2F(0.5f, 0.5f);
-      m_smartAimHasTarget = true;
-      return m_smartAimTargetPos;
-    }
-
-    // 周围无实体方块（隔空拆除背景墙/空气中）：完全自由跟随玩家手指与摇杆指向！
+    Vec2I finalTile = foundSolid ? bestTile : targetTile;
     m_smartAimType = SmartAimTargetType::Tile;
-    m_smartAimTargetPos = targetAim;
-    m_smartAimHasTarget = false;
-    return targetAim;
+    m_smartAimTargetPos = Vec2F(finalTile) + Vec2F(0.5f, 0.5f);
+    m_smartAimHasTarget = true;
+    return m_smartAimTargetPos;
   }
 
   // ==========================================
@@ -1270,17 +1267,22 @@ void MainInterface::renderSmartAimReticle() {
     float y0 = screenPos[1] - halfTile;
     float x1 = screenPos[0] + halfTile;
     float y1 = screenPos[1] + halfTile;
-    float corner = std::max(3.0f, halfTile * 0.4f);
 
-    Vec4B glowCyan(0, 240, 255, 230);
-    m_guiContext->drawInterfaceLine(Vec2F(x0, y1), Vec2F(x0 + corner, y1), glowCyan, 2.0f);
-    m_guiContext->drawInterfaceLine(Vec2F(x0, y1), Vec2F(x0, y1 - corner), glowCyan, 2.0f);
-    m_guiContext->drawInterfaceLine(Vec2F(x1, y1), Vec2F(x1 - corner, y1), glowCyan, 2.0f);
-    m_guiContext->drawInterfaceLine(Vec2F(x1, y1), Vec2F(x1, y1 - corner), glowCyan, 2.0f);
-    m_guiContext->drawInterfaceLine(Vec2F(x0, y0), Vec2F(x0 + corner, y0), glowCyan, 2.0f);
-    m_guiContext->drawInterfaceLine(Vec2F(x0, y0), Vec2F(x0, y0 + corner), glowCyan, 2.0f);
-    m_guiContext->drawInterfaceLine(Vec2F(x1, y0), Vec2F(x1 - corner, y0), glowCyan, 2.0f);
-    m_guiContext->drawInterfaceLine(Vec2F(x1, y0), Vec2F(x1, y0 + corner), glowCyan, 2.0f);
+    // 全包围发光方块选框，带淡青色柔光填充
+    Vec4B glowCyan(0, 240, 255, 235);
+    Vec4B cyanFill(0, 210, 255, 45);
+    m_guiContext->drawQuad(RectF(x0, y0, x1, y1), cyanFill);
+
+    // 四边实线框
+    m_guiContext->drawInterfaceLine(Vec2F(x0, y0), Vec2F(x1, y0), glowCyan, 2.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(x1, y0), Vec2F(x1, y1), glowCyan, 2.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(x1, y1), Vec2F(x0, y1), glowCyan, 2.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(x0, y1), Vec2F(x0, y0), glowCyan, 2.0f);
+
+    // 中心微型发光十字星
+    float cross = halfTile * 0.25f;
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] - cross, screenPos[1]), Vec2F(screenPos[0] + cross, screenPos[1]), glowCyan, 1.5f);
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0], screenPos[1] - cross), Vec2F(screenPos[0], screenPos[1] + cross), glowCyan, 1.5f);
   } else if (m_smartAimType == SmartAimTargetType::Enemy) {
     Vec4B lockRed(255, 60, 60, 240);
     float r = 14.0f * s;
