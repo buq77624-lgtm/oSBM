@@ -1145,7 +1145,10 @@ Vec2F MainInterface::computeSmartAim(Vec2F const& rawAimPos) {
     Vec2F toCursor = world->geometry().diff(entPos, rawAimPos);
     float cursorDist = toCursor.magnitude();
     float dot = (d > 0.001f) ? (toEnt[0] * aimDir[0] + toEnt[1] * aimDir[1]) / d : 0.0f;
-    float score = cursorDist - (dot > 0.0f ? dot * 6.0f : -dot * 10.0f);
+    // 确保与射击轮盘指向不冲突：仅在瞄准前方扇区内（约75度锥形范围）搜索敌怪
+    if (dot < 0.25f)
+      continue;
+    float score = cursorDist - dot * 8.0f;
     if (score < bestEnemyScore) {
       bestEnemyScore = score;
       bestEnemy = entity;
@@ -1181,6 +1184,13 @@ Vec2F MainInterface::computeSmartAim(Vec2F const& rawAimPos) {
       bool isBg = isRealMaterial(bgMat);
 
       if (isFg || isBg) {
+        Vec2F toTile = world->geometry().diff(tCenter, playerPos);
+        float tileDist = toTile.magnitude();
+        float tileDot = (tileDist > 0.001f) ? (toTile[0] * aimDir[0] + toTile[1] * aimDir[1]) / tileDist : 0.0f;
+        // 方块也要求处于瞄准朝向扇区，不产生逆向冲突
+        if (tileDot < 0.15f)
+          continue;
+
         float dist = (tCenter - rawAimPos).magnitude();
         if (isFg)
           dist -= 1.0f;

@@ -201,17 +201,17 @@ PerformanceCounterMode perfCounterModeFromName(String const& name, PerformanceCo
 
 std::vector<MobileTouchElement> defaultTouchElements() {
   return {
-    {"joystick", launcherTextStatic("touchElement.joystick", "Joystick"), MobileTouchElementKind::Joystick, true, {0.14f, 0.72f}, 1.25f, keyAction(Key::Space), {}, {}, {}, {}},
-    {"leftHand", launcherTextStatic("touchElement.leftHand", "Attack"), MobileTouchElementKind::Button, true, {0.84f, 0.72f}, 1.25f, mouseAction(MouseButton::Left), {}, {}, {}, {}},
-    {"altFire", launcherTextStatic("touchElement.altFire", "Alt"), MobileTouchElementKind::Button, true, {0.70f, 0.70f}, 1.05f, mouseAction(MouseButton::Right), {}, {}, {}, {}},
-    {"jump", launcherTextStatic("touchElement.jump", "Jump"), MobileTouchElementKind::Button, true, {0.74f, 0.86f}, 1.10f, keyAction(Key::Space), {}, {}, {}, {}},
-    {"interact", launcherTextStatic("touchElement.interact", "E"), MobileTouchElementKind::Button, true, {0.78f, 0.54f}, 1.00f, keyAction(Key::E), {}, {}, {}, {}},
-    {"tech", launcherTextStatic("touchElement.tech", "Tech"), MobileTouchElementKind::Button, true, {0.89f, 0.52f}, 0.95f, keyAction(Key::F), {}, {}, {}, {}},
+    {"joystick", launcherTextStatic("touchElement.joystick", "移动"), MobileTouchElementKind::Joystick, true, {0.14f, 0.72f}, 1.25f, keyAction(Key::Space), {}, {}, {}, {}},
+    {"aimJoystick", launcherTextStatic("touchElement.aimJoystick", "射击"), MobileTouchElementKind::AimJoystick, true, {0.84f, 0.70f}, 1.25f, mouseAction(MouseButton::Left), {}, {}, {}, {}},
+    {"leftHand", launcherTextStatic("touchElement.leftHand", "攻击"), MobileTouchElementKind::Button, true, {0.70f, 0.68f}, 1.15f, mouseAction(MouseButton::Left), {}, {}, {}, {}},
+    {"altFire", launcherTextStatic("touchElement.altFire", "副手"), MobileTouchElementKind::Button, true, {0.70f, 0.84f}, 1.05f, mouseAction(MouseButton::Right), {}, {}, {}, {}},
+    {"jump", launcherTextStatic("touchElement.jump", "跳跃"), MobileTouchElementKind::Button, true, {0.92f, 0.86f}, 1.10f, keyAction(Key::Space), {}, {}, {}, {}},
+    {"interact", launcherTextStatic("touchElement.interact", "E"), MobileTouchElementKind::Button, true, {0.76f, 0.42f}, 1.00f, keyAction(Key::E), {}, {}, {}, {}},
+    {"tech", launcherTextStatic("touchElement.tech", "Tech"), MobileTouchElementKind::Button, true, {0.90f, 0.48f}, 0.95f, keyAction(Key::F), {}, {}, {}, {}},
+    {"smartAim", launcherTextStatic("touchElement.smartAim", "自瞄"), MobileTouchElementKind::Button, true, {0.90f, 0.32f}, 0.95f, keyAction(Key::F8), {}, {}, {}, {}, MobileTouchPressMode::SinglePress},
     {"shift", launcherTextStatic("touchElement.shift", "Shift"), MobileTouchElementKind::Button, true, {0.08f, 0.45f}, 0.85f, keyAction(Key::LShift), {}, {}, {}, {}},
     {"pauseGame", launcherTextStatic("touchElement.pauseGame", "暂停"), MobileTouchElementKind::Button, true, {0.05f, 0.08f}, 0.85f, keyAction(Key::Pause), {}, {}, {}, {}, MobileTouchPressMode::SinglePress},
     {"pause", launcherTextStatic("touchElement.pause", "ESC"), MobileTouchElementKind::Button, true, {0.05f, 0.20f}, 0.80f, keyAction(Key::Escape), {}, {}, {}, {}},
-    {"smartAim", launcherTextStatic("touchElement.smartAim", "自瞄"), MobileTouchElementKind::Button, true, {0.86f, 0.38f}, 0.95f, keyAction(Key::F8), {}, {}, {}, {}, MobileTouchPressMode::SinglePress},
-    {"aimJoystick", launcherTextStatic("touchElement.aimJoystick", "Aim"), MobileTouchElementKind::AimJoystick, false, {0.84f, 0.72f}, 1.35f, noneAction(), {}, {}, {}, {}},
     {"rightHand", launcherTextStatic("touchElement.rightHand", "R"), MobileTouchElementKind::Button, false, {0.64f, 0.16f}, 0.92f, mouseAction(MouseButton::Right), {}, {}, {}, {}},
     {"chat", launcherTextStatic("touchElement.chat", "T"), MobileTouchElementKind::Button, false, {0.83f, 0.90f}, 0.72f, keyAction(Key::Return), {}, {}, {}, {}},
     {"ctrl", launcherTextStatic("touchElement.ctrl", "Ctrl"), MobileTouchElementKind::Button, false, {0.58f, 0.88f}, 0.82f, keyAction(Key::LCtrl), {}, {}, {}, {}},
@@ -847,6 +847,8 @@ public:
           if (mag > maxKnob)
             delta = delta / mag * maxKnob;
           knobPos = ip(center + delta);
+        } else {
+          labels.push_back({ip(center), element.label});
         }
         float knobRadius = drawRadius * 0.38f;
         draw->AddCircleFilled(knobPos, knobRadius, isHeld ? fill : IM_COL32(30, 41, 59, (int)(190.0f * alphaFactor)), 32);
@@ -871,6 +873,8 @@ public:
           if (mag > maxKnob)
             delta = delta / mag * maxKnob;
           knobPos = ip(center + delta);
+        } else {
+          labels.push_back({ip(center), element.label});
         }
         float knobRadius = drawRadius * 0.38f;
         draw->AddCircleFilled(knobPos, knobRadius, isHeld ? fill : IM_COL32(30, 41, 59, (int)(190.0f * alphaFactor)), 32);
@@ -1431,6 +1435,17 @@ private:
     setKeyOwner("joystick:left", Key::A, m_moveVec[0] < -0.30f);
     setKeyOwner("joystick:up", Key::W, m_moveVec[1] < -0.30f);
     setKeyOwner("joystick:down", Key::S, m_moveVec[1] > 0.30f);
+
+    bool aimFiring = m_aimJoystickActive && (m_aimVec.magnitudeSquared() > (m_config.deadzone * m_config.deadzone * 1.5f));
+    if (auto element = findElement(m_aimJoystickElementId)) {
+      if (element->action.kind != MobileTouchActionKind::None)
+        setAction(element->action, "aimJoystick:action", aimFiring);
+      else
+        setMouseOwner("aimJoystick:action", MouseButton::Left, aimFiring);
+    } else {
+      setMouseOwner("aimJoystick:action", MouseButton::Left, aimFiring);
+    }
+
     updateVirtualAimTarget();
     releaseExpiredPulsedActions();
     processMacroEvents();
@@ -1538,6 +1553,7 @@ private:
     Vec2F delta;
 
     if (m_aimJoystickActive && m_aimVec.magnitudeSquared() > 0.0001f) {
+      // 射击轮盘优先调控射击方向，拥有最高优先级
       float sensitivity = 1.0f;
       if (auto element = findElement(m_aimJoystickElementId))
         sensitivity = std::clamp(element->aimSensitivity, 0.25f, 4.0f);
@@ -1550,6 +1566,12 @@ private:
         float speed = controlRadius() * 0.22f * sensitivity * std::clamp(m_aimVec.magnitude(), 0.25f, 1.0f);
         delta += m_aimVec * speed;
       }
+    } else if (m_joystickActive && m_moveVec.magnitudeSquared() > 0.0001f) {
+      // 射击轮盘未操作时，移动轮盘调控人物头部朝向
+      float deflection = std::clamp(m_moveVec.magnitude(), 0.0f, 1.0f);
+      Vec2F direction = m_moveVec / std::max(0.0001f, m_moveVec.magnitude());
+      emitDirectionalAim(direction, deflection, false);
+      return;
     }
 
     delta += gyroAimDelta(now);
