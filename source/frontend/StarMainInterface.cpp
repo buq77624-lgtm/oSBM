@@ -1104,8 +1104,10 @@ void MainInterface::toggleSmartAim() {
     m_smartAimHasTarget = false;
     m_smartAimType = SmartAimTargetType::None;
   }
+  String statusMsg = strf("辅助自瞄: {}", m_smartAimActive ? "开启" : "关闭");
+  queueMessage(statusMsg);
   if (m_chat)
-    m_chat->addLine(strf("^#00e5ff;[自瞄/智能光标] 已{}", m_smartAimActive ? "^green;开启" : "^red;关闭"));
+    m_chat->addLine(strf("^#00e5ff;[辅助瞄准] 已{}", m_smartAimActive ? "^green;开启" : "^red;关闭"));
 }
 
 Vec2F MainInterface::computeSmartAim(Vec2F const& rawAimPos) {
@@ -1124,7 +1126,79 @@ Vec2F MainInterface::computeSmartAim(Vec2F const& rawAimPos) {
   float aimDist = aimOffset.magnitude();
   Vec2F aimDir = (aimDist > 0.001f) ? (aimOffset / aimDist) : Vec2F(player->facingDirection() == Direction::Right ? 1.0f : -1.0f, 0.0f);
 
-  // 1. Hostile enemy / PVP aimbot
+  // 判定当前是否为物质枪 / 采矿建造工具模式
+  bool isMiningMode = false;
+  auto selLoc = player->inventory()->selectedActionBarLocation();
+  if (selLoc.is<EssentialItem>()) {
+    auto ess = selLoc.get<EssentialItem>();
+    if (ess == EssentialItem::BeamAxe || ess == EssentialItem::WireTool || ess == EssentialItem::PaintTool)
+      isMiningMode = true;
+  }
+  if (!isMiningMode) {
+    if (auto item = player->primaryHandItem()) {
+      String n = item->name().toLower();
+      if (n.contains("beamaxe") || n.contains("pickaxe") || n.contains("drill") || n.contains("manipulator") || n.contains("wiretool") || n.contains("painttool"))
+        isMiningMode = true;
+    }
+  }
+
+  // ==========================================
+  // 1. 物质枪 / 采矿模式：彻底支持隔空自由拆方块
+  // ==========================================
+  if (isMiningMode) {
+    float maxReach = std::max(16.0f, player->toolRadius());
+    Vec2F targetAim = rawAimPos;
+    if (aimDist > maxReach)
+      targetAim = playerPos + aimDir * maxReach;
+
+    Vec2I aimTile = Vec2I::floor(targetAim);
+    Vec2I bestTile = aimTile;
+    bool foundTile = false;
+    float bestTileDist = 1e9f;
+
+    // 仅在玩家落点周围 ±1 格范围内检测是否有实体方块做网格对齐，绝不阻挡隔空深处方块！
+    for (int dy = -1; dy <= 1; ++dy) {
+      for (int dx = -1; dx <= 1; ++dx) {
+        Vec2I tPos = aimTile + Vec2I(dx, dy);
+        Vec2F tCenter = Vec2F(tPos) + Vec2F(0.5f, 0.5f);
+        if (world->geometry().diff(tCenter, playerPos).magnitude() > maxReach)
+          continue;
+        if (world->isTileProtected(tPos))
+          continue;
+
+        MaterialId fgMat = world->material(tPos, TileLayer::Foreground);
+        MaterialId bgMat = world->material(tPos, TileLayer::Background);
+        if (isRealMaterial(fgMat) || isRealMaterial(bgMat)) {
+          float dist = (tCenter - targetAim).magnitude();
+          if (isRealMaterial(fgMat))
+            dist -= 0.25f;
+          if (dist < bestTileDist) {
+            bestTileDist = dist;
+            bestTile = tPos;
+            foundTile = true;
+          }
+        }
+      }
+    }
+
+    if (foundTile && bestTileDist < 1.35f) {
+      m_smartAimType = SmartAimTargetType::Tile;
+      // 微调对齐到方块中心，高亮网格框
+      m_smartAimTargetPos = Vec2F(bestTile) + Vec2F(0.5f, 0.5f);
+      m_smartAimHasTarget = true;
+      return m_smartAimTargetPos;
+    }
+
+    // 周围无实体方块（隔空拆除背景墙/空气中）：完全自由跟随玩家手指与摇杆指向！
+    m_smartAimType = SmartAimTargetType::Tile;
+    m_smartAimTargetPos = targetAim;
+    m_smartAimHasTarget = false;
+    return targetAim;
+  }
+
+  // ==========================================
+  // 2. 武器战斗模式：极度舒适的手游级辅助瞄准（Aim Assist，非硬锁）
+  // ==========================================
   float enemySearchRadius = 24.0f;
   RectF enemyQueryRect = RectF::withCenter(playerPos, Vec2F::filled(enemySearchRadius * 2.0f));
   shared_ptr<DamageBarEntity> bestEnemy;
@@ -1141,92 +1215,38 @@ Vec2F MainInterface::computeSmartAim(Vec2F const& rawAimPos) {
     Vec2F entPos = entity->position();
     Vec2F toEnt = world->geometry().diff(entPos, playerPos);
     float d = toEnt.magnitude();
-    if (d > enemySearchRadius)
+    if (d > enemySearchRadius || d < 0.5f)
+      continue;
+
+    Vec2F entDir = toEnt / d;
+    float dot = entDir[0] * aimDir[0] + entDir[1] * aimDir[1];
+    // 仅在瞄准前方约 60 度锥形扇区内寻找敌怪
+    if (dot < 0.50f)
       continue;
 
     Vec2F toCursor = world->geometry().diff(entPos, rawAimPos);
     float cursorDist = toCursor.magnitude();
-    float dot = (d > 0.001f) ? (toEnt[0] * aimDir[0] + toEnt[1] * aimDir[1]) / d : 0.0f;
-    // 确保与射击轮盘指向不冲突：仅在瞄准前方扇区内（约75度锥形范围）搜索敌怪
-    if (dot < 0.25f)
-      continue;
-    float score = cursorDist - dot * 8.0f;
+    float score = cursorDist - dot * 10.0f;
     if (score < bestEnemyScore) {
       bestEnemyScore = score;
       bestEnemy = entity;
     }
   }
 
-  if (bestEnemy && bestEnemyScore < 16.0f) {
+  if (bestEnemy && bestEnemyScore < 18.0f) {
+    Vec2F entPos = bestEnemy->position();
+    Vec2F toEnemy = world->geometry().diff(entPos, playerPos);
+    float entDist = toEnemy.magnitude();
+    Vec2F enemyDir = (entDist > 0.001f) ? (toEnemy / entDist) : aimDir;
+
+    float dot = std::clamp(aimDir[0] * enemyDir[0] + aimDir[1] * enemyDir[1], 0.0f, 1.0f);
+    // 柔性磁力引导（随偏角平滑衰减，绝不硬锁，玩家随时轻松脱锁）
+    float assistStrength = 0.55f * std::pow(dot, 1.2f);
+    Vec2F blendedDir = (aimDir * (1.0f - assistStrength) + enemyDir * assistStrength).normalized();
+    float targetDist = std::min(aimDist, entDist);
+
     m_smartAimType = SmartAimTargetType::Enemy;
-    m_smartAimTargetPos = bestEnemy->position();
-    m_smartAimHasTarget = true;
-    return m_smartAimTargetPos;
-  }
-
-  // 2. Terraria-style smart cursor for matter manipulator & mining
-  float maxReach = std::max(12.0f, player->toolRadius());
-  Vec2I rawAimTile = Vec2I::floor(rawAimPos);
-  Vec2I bestTile = rawAimTile;
-  bool foundTile = false;
-  float bestTileDist = 1e9f;
-
-  for (int dy = -2; dy <= 2; ++dy) {
-    for (int dx = -2; dx <= 2; ++dx) {
-      Vec2I tPos = rawAimTile + Vec2I(dx, dy);
-      Vec2F tCenter = Vec2F(tPos) + Vec2F(0.5f, 0.5f);
-      if (world->geometry().diff(tCenter, playerPos).magnitude() > maxReach)
-        continue;
-      if (world->isTileProtected(tPos))
-        continue;
-
-      MaterialId fgMat = world->material(tPos, TileLayer::Foreground);
-      MaterialId bgMat = world->material(tPos, TileLayer::Background);
-      bool isFg = isRealMaterial(fgMat);
-      bool isBg = isRealMaterial(bgMat);
-
-      if (isFg || isBg) {
-        Vec2F toTile = world->geometry().diff(tCenter, playerPos);
-        float tileDist = toTile.magnitude();
-        float tileDot = (tileDist > 0.001f) ? (toTile[0] * aimDir[0] + toTile[1] * aimDir[1]) / tileDist : 0.0f;
-        // 方块也要求处于瞄准朝向扇区，不产生逆向冲突
-        if (tileDot < 0.15f)
-          continue;
-
-        float dist = (tCenter - rawAimPos).magnitude();
-        if (isFg)
-          dist -= 1.0f;
-        if (isRealMod(world->mod(tPos, TileLayer::Foreground)))
-          dist -= 1.5f;
-
-        if (dist < bestTileDist) {
-          bestTileDist = dist;
-          bestTile = tPos;
-          foundTile = true;
-        }
-      }
-    }
-  }
-
-  if (!foundTile) {
-    float step = 0.5f;
-    for (float d = 1.5f; d <= maxReach; d += step) {
-      Vec2F checkPos = playerPos + aimDir * d;
-      Vec2I tPos = Vec2I::floor(checkPos);
-      if (world->isTileProtected(tPos))
-        continue;
-      MaterialId fgMat = world->material(tPos, TileLayer::Foreground);
-      if (isRealMaterial(fgMat)) {
-        bestTile = tPos;
-        foundTile = true;
-        break;
-      }
-    }
-  }
-
-  if (foundTile) {
-    m_smartAimType = SmartAimTargetType::Tile;
-    m_smartAimTargetPos = Vec2F(bestTile) + Vec2F(0.5f, 0.5f);
+    m_smartAimTargetPos = playerPos + blendedDir * targetDist;
     m_smartAimHasTarget = true;
     return m_smartAimTargetPos;
   }

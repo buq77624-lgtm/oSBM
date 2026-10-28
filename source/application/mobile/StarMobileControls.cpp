@@ -202,13 +202,13 @@ PerformanceCounterMode perfCounterModeFromName(String const& name, PerformanceCo
 std::vector<MobileTouchElement> defaultTouchElements() {
   return {
     {"joystick", launcherTextStatic("touchElement.joystick", "移动"), MobileTouchElementKind::Joystick, true, {0.14f, 0.72f}, 1.25f, keyAction(Key::Space), {}, {}, {}, {}},
-    {"aimJoystick", launcherTextStatic("touchElement.aimJoystick", "射击"), MobileTouchElementKind::AimJoystick, true, {0.84f, 0.70f}, 1.30f, mouseAction(MouseButton::Left), {}, {}, {}, {}},
+    {"aimJoystick", launcherTextStatic("touchElement.aimJoystick", "主手"), MobileTouchElementKind::AimJoystick, true, {0.84f, 0.72f}, 1.30f, mouseAction(MouseButton::Left), {}, {}, {}, {}},
     {"leftHand", launcherTextStatic("touchElement.leftHand", "攻击"), MobileTouchElementKind::Button, false, {0.70f, 0.68f}, 1.15f, mouseAction(MouseButton::Left), {}, {}, {}, {}},
-    {"altFire", launcherTextStatic("touchElement.altFire", "副手"), MobileTouchElementKind::Button, true, {0.70f, 0.84f}, 1.05f, mouseAction(MouseButton::Right), {}, {}, {}, {}},
-    {"jump", launcherTextStatic("touchElement.jump", "跳跃"), MobileTouchElementKind::Button, true, {0.92f, 0.86f}, 1.10f, keyAction(Key::Space), {}, {}, {}, {}},
-    {"interact", launcherTextStatic("touchElement.interact", "E"), MobileTouchElementKind::Button, true, {0.76f, 0.42f}, 1.00f, keyAction(Key::E), {}, {}, {}, {}},
-    {"tech", launcherTextStatic("touchElement.tech", "Tech"), MobileTouchElementKind::Button, true, {0.90f, 0.48f}, 0.95f, keyAction(Key::F), {}, {}, {}, {}},
-    {"smartAim", launcherTextStatic("touchElement.smartAim", "自瞄"), MobileTouchElementKind::Button, true, {0.90f, 0.32f}, 0.95f, keyAction(Key::F8), {}, {}, {}, {}, MobileTouchPressMode::SinglePress},
+    {"altFire", launcherTextStatic("touchElement.altFire", "副手"), MobileTouchElementKind::Button, true, {0.70f, 0.58f}, 1.15f, mouseAction(MouseButton::Right), {}, {}, {}, {}},
+    {"jump", launcherTextStatic("touchElement.jump", "跳跃"), MobileTouchElementKind::Button, true, {0.92f, 0.88f}, 1.10f, keyAction(Key::Space), {}, {}, {}, {}},
+    {"interact", launcherTextStatic("touchElement.interact", "E"), MobileTouchElementKind::Button, true, {0.74f, 0.40f}, 1.00f, keyAction(Key::E), {}, {}, {}, {}},
+    {"tech", launcherTextStatic("touchElement.tech", "Tech"), MobileTouchElementKind::Button, true, {0.88f, 0.48f}, 0.95f, keyAction(Key::F), {}, {}, {}, {}},
+    {"smartAim", launcherTextStatic("touchElement.smartAim", "自瞄"), MobileTouchElementKind::Button, true, {0.88f, 0.34f}, 0.95f, keyAction(Key::F8), {}, {}, {}, {}, MobileTouchPressMode::SinglePress},
     {"shift", launcherTextStatic("touchElement.shift", "Shift"), MobileTouchElementKind::Button, true, {0.08f, 0.45f}, 0.85f, keyAction(Key::LShift), {}, {}, {}, {}},
     {"pauseGame", launcherTextStatic("touchElement.pauseGame", "暂停"), MobileTouchElementKind::Button, true, {0.05f, 0.08f}, 0.85f, keyAction(Key::Pause), {}, {}, {}, {}, MobileTouchPressMode::SinglePress},
     {"pause", launcherTextStatic("touchElement.pause", "ESC"), MobileTouchElementKind::Button, true, {0.05f, 0.20f}, 0.80f, keyAction(Key::Escape), {}, {}, {}, {}},
@@ -437,20 +437,24 @@ std::vector<MobileTouchElement> touchElementsFromConfig(Json const& config) {
   }
 
   // 双轮盘系统强制适配与旧按键迁移：
-  // 查找射击轮盘(aimJoystick)与旧普通攻击按键(leftHand)
+  // 查找主手射击轮盘(aimJoystick)、旧普通攻击(leftHand)及副手按键(altFire)
   MobileTouchElement* aimJoy = nullptr;
   MobileTouchElement* leftHand = nullptr;
+  MobileTouchElement* altElem = nullptr;
   for (auto& elem : elements) {
     if (elem.id == "aimJoystick")
       aimJoy = &elem;
     else if (elem.id == "leftHand")
       leftHand = &elem;
+    else if (elem.id == "altFire")
+      altElem = &elem;
   }
 
   // 1. 如果旧存档中有 leftHand 攻击按键，但 aimJoystick 未激活或不存在：
   if (aimJoy) {
     aimJoy->enabled = true;
     aimJoy->kind = MobileTouchElementKind::AimJoystick;
+    aimJoy->label = launcherTextStatic("touchElement.aimJoystick", "主手");
     if (leftHand && leftHand->enabled) {
       // 继承原有攻击按键的位置与尺寸，完成无缝无痛升级为射击轮盘
       aimJoy->position = leftHand->position;
@@ -458,9 +462,9 @@ std::vector<MobileTouchElement> touchElementsFromConfig(Json const& config) {
       leftHand->enabled = false;
     }
   } else {
-    Vec2F pos = leftHand ? leftHand->position : Vec2F{0.84f, 0.70f};
+    Vec2F pos = leftHand ? leftHand->position : Vec2F{0.84f, 0.72f};
     float sz = leftHand ? std::max(1.25f, leftHand->size) : 1.30f;
-    elements.push_back({"aimJoystick", launcherTextStatic("touchElement.aimJoystick", "射击"), MobileTouchElementKind::AimJoystick, true, pos, sz, mouseAction(MouseButton::Left), {}, {}, {}, {}});
+    elements.push_back({"aimJoystick", launcherTextStatic("touchElement.aimJoystick", "主手"), MobileTouchElementKind::AimJoystick, true, pos, sz, mouseAction(MouseButton::Left), {}, {}, {}, {}});
     if (leftHand)
       leftHand->enabled = false;
   }
@@ -468,6 +472,17 @@ std::vector<MobileTouchElement> touchElementsFromConfig(Json const& config) {
   // 2. 避免普通攻击按键与射击轮盘重叠冲突，主开火由射击轮盘全权负责
   if (leftHand && aimJoy && (leftHand->position - aimJoy->position).magnitudeSquared() < 0.04f)
     leftHand->enabled = false;
+
+  // 3. 确保【副手】(altFire) 处于紧邻主手射击轮盘的黄金操作区 {0.70f, 0.58f}
+  if (altElem) {
+    altElem->enabled = true;
+    altElem->label = launcherTextStatic("touchElement.altFire", "副手");
+    if (altElem->position[1] > 0.75f)
+      altElem->position = {0.70f, 0.58f};
+    altElem->size = std::max(1.10f, altElem->size);
+  } else {
+    elements.push_back({"altFire", launcherTextStatic("touchElement.altFire", "副手"), MobileTouchElementKind::Button, true, {0.70f, 0.58f}, 1.15f, mouseAction(MouseButton::Right), {}, {}, {}, {}});
+  }
 
   return elements;
 }
@@ -1517,7 +1532,7 @@ private:
   }
 
   bool directionalAimActive() const {
-    return m_aimJoystickActive && !aimJoystickPrecise();
+    return (m_aimJoystickActive && !aimJoystickPrecise()) || (m_joystickActive && !aimJoystickPrecise());
   }
 
   float directionalAimRadius() const {
