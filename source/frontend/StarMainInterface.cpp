@@ -449,16 +449,20 @@ bool MainInterface::handleInputEvent(InputEvent const& event) {
       if (!m_mobileDirectionalAimActive)
         m_cursorScreenIPos = Vec2I::round(m_cursorScreenPos = mouseDown->mousePosition);
 
-      if (mouseButton == MouseButton::Left)
+      if (mouseButton == MouseButton::Left) {
+        m_mobileFiringPrimary = true;
         player->beginPrimaryFire();
+      }
       if (mouseButton == MouseButton::Right)
         player->beginAltFire();
       if (mouseButton == MouseButton::Middle)
         player->beginTrigger();
     }
   } else if (auto mouseUp = event.ptr<MouseButtonUpEvent>()) {
-    if (mouseUp->mouseButton == MouseButton::Left)
+    if (mouseUp->mouseButton == MouseButton::Left) {
+      m_mobileFiringPrimary = false;
       player->endPrimaryFire();
+    }
     if (mouseUp->mouseButton == MouseButton::Right)
       player->endAltFire();
     if (mouseUp->mouseButton == MouseButton::Middle)
@@ -635,6 +639,45 @@ void MainInterface::update(float dt) {
     m_paneManager.displayRegisteredPane(MainInterfacePanes::Codex);
 
   auto player = m_client->mainPlayer();
+  if (player) {
+    if (m_mobileComboPulseNeedsFire) {
+      m_mobileComboPulseNeedsFire = false;
+      player->beginPrimaryFire();
+    }
+
+    if (m_mobileFiringPrimary) {
+      bool isMiningTool = false;
+      auto selLoc = player->inventory()->selectedActionBarLocation();
+      if (selLoc.is<EssentialItem>()) {
+        auto ess = selLoc.get<EssentialItem>();
+        if (ess == EssentialItem::BeamAxe || ess == EssentialItem::WireTool || ess == EssentialItem::PaintTool)
+          isMiningTool = true;
+      }
+      if (!isMiningTool) {
+        if (auto item = player->primaryHandItem()) {
+          String n = item->name().toLower();
+          if (n.contains("beamaxe") || n.contains("pickaxe") || n.contains("drill") || n.contains("manipulator") || n.contains("wiretool") || n.contains("painttool"))
+            isMiningTool = true;
+        }
+      }
+
+      // 近战或枪械等战斗武器：按住时按节拍产生刷新脉冲，驱动双手武器顺畅打出完整连招（3-hit combo）
+      if (!isMiningTool) {
+        m_mobileComboPulseTimer += dt;
+        if (m_mobileComboPulseTimer >= 0.30f) {
+          m_mobileComboPulseTimer = 0.0f;
+          player->endPrimaryFire();
+          m_mobileComboPulseNeedsFire = true;
+        }
+      } else {
+        m_mobileComboPulseTimer = 0.0f;
+      }
+    } else {
+      m_mobileComboPulseTimer = 0.0f;
+      m_mobileComboPulseNeedsFire = false;
+    }
+  }
+
   auto cursorWorldPos = cursorWorldPosition();
   if (player->wireToolInUse()) {
     m_paneManager.displayRegisteredPane(MainInterfacePanes::WireInterface);
@@ -1258,7 +1301,7 @@ void MainInterface::renderSmartAimReticle() {
     return;
 
   Vec2F screenPos = m_worldPainter->camera().worldToScreen(m_smartAimTargetPos);
-  float s = interfaceScale();
+  _unused(interfaceScale());
 
   if (m_smartAimType == SmartAimTargetType::Tile) {
     float tileSize = 8.0f * m_worldPainter->camera().pixelRatio();
@@ -1284,18 +1327,34 @@ void MainInterface::renderSmartAimReticle() {
     m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] - cross, screenPos[1]), Vec2F(screenPos[0] + cross, screenPos[1]), glowCyan, 1.5f);
     m_guiContext->drawInterfaceLine(Vec2F(screenPos[0], screenPos[1] - cross), Vec2F(screenPos[0], screenPos[1] + cross), glowCyan, 1.5f);
   } else if (m_smartAimType == SmartAimTargetType::Enemy) {
-    Vec4B lockRed(255, 60, 60, 240);
-    float r = 14.0f * s;
-    float gap = 4.0f * s;
-    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] - r, screenPos[1]), Vec2F(screenPos[0] - gap, screenPos[1]), lockRed, 2.0f);
-    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] + gap, screenPos[1]), Vec2F(screenPos[0] + r, screenPos[1]), lockRed, 2.0f);
-    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0], screenPos[1] - r), Vec2F(screenPos[0], screenPos[1] - gap), lockRed, 2.0f);
-    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0], screenPos[1] + gap), Vec2F(screenPos[0], screenPos[1] + r), lockRed, 2.0f);
+    Vec4B lockRed(255, 75, 75, 215);
+    Vec4B dotRed(255, 120, 120, 190);
+    // 采用精致轻巧的微型战术准星（外径仅 7px，中心镂空绝不遮怪）
+    float r = 7.0f;
+    float gap = 3.0f;
+    // 四方短十字触须（线宽 1.0f）
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] - r, screenPos[1]), Vec2F(screenPos[0] - gap, screenPos[1]), lockRed, 1.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] + gap, screenPos[1]), Vec2F(screenPos[0] + r, screenPos[1]), lockRed, 1.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0], screenPos[1] - r), Vec2F(screenPos[0], screenPos[1] - gap), lockRed, 1.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0], screenPos[1] + gap), Vec2F(screenPos[0], screenPos[1] + r), lockRed, 1.0f);
 
-    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] - gap, screenPos[1] - gap), Vec2F(screenPos[0] + gap, screenPos[1] - gap), lockRed, 1.5f);
-    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] + gap, screenPos[1] - gap), Vec2F(screenPos[0] + gap, screenPos[1] + gap), lockRed, 1.5f);
-    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] + gap, screenPos[1] + gap), Vec2F(screenPos[0] - gap, screenPos[1] + gap), lockRed, 1.5f);
-    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] - gap, screenPos[1] + gap), Vec2F(screenPos[0] - gap, screenPos[1] - gap), lockRed, 1.5f);
+    // 四角极简折角微标（每个边长 2.0px）
+    float c = 2.0f;
+    // 左上
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] - gap, screenPos[1] - gap), Vec2F(screenPos[0] - gap + c, screenPos[1] - gap), lockRed, 1.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] - gap, screenPos[1] - gap), Vec2F(screenPos[0] - gap, screenPos[1] - gap + c), lockRed, 1.0f);
+    // 右上
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] + gap, screenPos[1] - gap), Vec2F(screenPos[0] + gap - c, screenPos[1] - gap), lockRed, 1.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] + gap, screenPos[1] - gap), Vec2F(screenPos[0] + gap, screenPos[1] - gap + c), lockRed, 1.0f);
+    // 左下
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] - gap, screenPos[1] + gap), Vec2F(screenPos[0] - gap + c, screenPos[1] + gap), lockRed, 1.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] - gap, screenPos[1] + gap), Vec2F(screenPos[0] - gap, screenPos[1] + gap - c), lockRed, 1.0f);
+    // 右下
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] + gap, screenPos[1] + gap), Vec2F(screenPos[0] + gap - c, screenPos[1] + gap), lockRed, 1.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] + gap, screenPos[1] + gap), Vec2F(screenPos[0] + gap, screenPos[1] + gap - c), lockRed, 1.0f);
+
+    // 中心微型瞄准点（仅 1px 大小）
+    m_guiContext->drawInterfaceLine(Vec2F(screenPos[0] - 0.5f, screenPos[1]), Vec2F(screenPos[0] + 0.5f, screenPos[1]), dotRed, 1.0f);
   }
 }
 

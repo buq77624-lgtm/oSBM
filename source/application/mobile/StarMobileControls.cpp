@@ -1046,7 +1046,7 @@ private:
       (float)(*m_windowSize)[1] / drawScale[1]
     };
     float shortSide = std::min(drawSize[0], drawSize[1]);
-    return 56.0f * radiusScale * m_config.size * std::max(1.0f, shortSide / 720.0f);
+    return 44.0f * radiusScale * m_config.size * std::clamp(shortSide / 1080.0f, 0.85f, 1.15f);
   }
 
   float tapMovementThreshold() const {
@@ -1304,8 +1304,6 @@ private:
         m_joystickFinger = 0;
         break;
       case FingerRole::AimJoystick:
-        if (tap && m_aimVec.magnitudeSquared() <= m_config.deadzone * m_config.deadzone)
-          emitMouseClick(mouseActionPosition(), MouseButton::Left);
         m_aimJoystickActive = false;
         m_aimJoystickElementId.clear();
         m_aimJoystickFinger = 0;
@@ -1488,7 +1486,7 @@ private:
     setKeyOwner("joystick:up", Key::W, m_moveVec[1] < -0.30f);
     setKeyOwner("joystick:down", Key::S, m_moveVec[1] > 0.30f);
 
-    bool aimFiring = m_aimJoystickActive && (Time::monotonicMilliseconds() - m_aimJoystickDownTimeMs > 100);
+    bool aimFiring = m_aimJoystickActive;
     if (auto element = findElement(m_aimJoystickElementId)) {
       if (element->action.kind != MobileTouchActionKind::None)
         setAction(element->action, "aimJoystick:action", aimFiring);
