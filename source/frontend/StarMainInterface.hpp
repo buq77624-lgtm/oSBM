@@ -311,8 +311,6 @@ private:
   Vec2F m_smartAimTargetPos{};
   bool m_smartAimHasTarget = false;
   bool m_mobileFiringPrimary = false;
-  float m_mobileComboPulseTimer = 0.0f;
-  bool m_mobileComboPulseNeedsFire = false;
 
   String m_lastCommand;
 

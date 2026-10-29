@@ -662,17 +662,14 @@ void ClientApplication::render() {
   renderer->setMultiSampling(config->get("antiAliasing").optBool().value(false) ? 4 : 0);
   renderer->switchEffectConfig("interface");
 
-#if STAR_SYSTEM_ANDROID || STAR_SYSTEM_IOS
-  float shortSide = std::min(m_guiContext->windowWidth(), m_guiContext->windowHeight());
-  if (auto interfaceScale = config->get("interfaceScale").optFloat().value(); interfaceScale != 0) {
-    m_guiContext->setInterfaceScale(interfaceScale);
-  } else {
-    // 移动端 AUTO 模式：短边 1080 对应约 0.675f，小巧精致、视野开阔
-    m_guiContext->setInterfaceScale(std::clamp(shortSide / 1600.0f, 0.45f, 0.75f));
-  }
-#else
   if (auto interfaceScale = config->get("interfaceScale").optFloat().value(); interfaceScale != 0)
     m_guiContext->setInterfaceScale(interfaceScale);
+#if STAR_SYSTEM_ANDROID || STAR_SYSTEM_IOS
+  else {
+    float shortSide = std::min(m_guiContext->windowWidth(), m_guiContext->windowHeight());
+    m_guiContext->setInterfaceScale(std::clamp(shortSide / 500.0f, 1.35f, 2.4f));
+  }
+#else
   else if (m_guiContext->windowWidth() >= m_crossoverRes[0] && m_guiContext->windowHeight() >= m_crossoverRes[1])
     m_guiContext->setInterfaceScale(m_maxInterfaceScale);
   else

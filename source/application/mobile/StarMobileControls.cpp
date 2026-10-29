@@ -1046,7 +1046,7 @@ private:
       (float)(*m_windowSize)[1] / drawScale[1]
     };
     float shortSide = std::min(drawSize[0], drawSize[1]);
-    return 44.0f * radiusScale * m_config.size * std::clamp(shortSide / 1080.0f, 0.85f, 1.15f);
+    return 56.0f * radiusScale * m_config.size * std::max(1.0f, shortSide / 720.0f);
   }
 
   float tapMovementThreshold() const {

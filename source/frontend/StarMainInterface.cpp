@@ -639,45 +639,6 @@ void MainInterface::update(float dt) {
     m_paneManager.displayRegisteredPane(MainInterfacePanes::Codex);
 
   auto player = m_client->mainPlayer();
-  if (player) {
-    if (m_mobileComboPulseNeedsFire) {
-      m_mobileComboPulseNeedsFire = false;
-      player->beginPrimaryFire();
-    }
-
-    if (m_mobileFiringPrimary) {
-      bool isMiningTool = false;
-      auto selLoc = player->inventory()->selectedActionBarLocation();
-      if (selLoc.is<EssentialItem>()) {
-        auto ess = selLoc.get<EssentialItem>();
-        if (ess == EssentialItem::BeamAxe || ess == EssentialItem::WireTool || ess == EssentialItem::PaintTool)
-          isMiningTool = true;
-      }
-      if (!isMiningTool) {
-        if (auto item = player->primaryHandItem()) {
-          String n = item->name().toLower();
-          if (n.contains("beamaxe") || n.contains("pickaxe") || n.contains("drill") || n.contains("manipulator") || n.contains("wiretool") || n.contains("painttool"))
-            isMiningTool = true;
-        }
-      }
-
-      // 近战或枪械等战斗武器：按住时按节拍产生刷新脉冲，驱动双手武器顺畅打出完整连招（3-hit combo）
-      if (!isMiningTool) {
-        m_mobileComboPulseTimer += dt;
-        if (m_mobileComboPulseTimer >= 0.30f) {
-          m_mobileComboPulseTimer = 0.0f;
-          player->endPrimaryFire();
-          m_mobileComboPulseNeedsFire = true;
-        }
-      } else {
-        m_mobileComboPulseTimer = 0.0f;
-      }
-    } else {
-      m_mobileComboPulseTimer = 0.0f;
-      m_mobileComboPulseNeedsFire = false;
-    }
-  }
-
   auto cursorWorldPos = cursorWorldPosition();
   if (player->wireToolInUse()) {
     m_paneManager.displayRegisteredPane(MainInterfacePanes::WireInterface);
@@ -1186,60 +1147,94 @@ Vec2F MainInterface::computeSmartAim(Vec2F const& rawAimPos) {
   }
 
   // ==========================================
-  // 1. 物质枪 / 采矿建造模式：右摇杆跳跃选择方块与隔空拆除
+  // 1. 泰拉瑞亚级智能光标采矿模式（Raycast + Tunnel + Ore Snap）
   // ==========================================
   if (isMiningMode) {
-    int maxReachTiles = std::clamp((int)std::ceil(player->toolRadius() * 1.5f), 10, 18);
-    float maxReachWorld = (float)maxReachTiles;
-    Vec2I playerTile = Vec2I::floor(playerPos);
+    float maxReach = std::clamp(player->toolRadius() * 1.5f, 10.0f, 18.0f);
+    Vec2F rayOrigin = playerPos + Vec2F(0.0f, 0.5f);
 
-    // 将轮盘拉动幅度映射为离散的方块步进距离（按格子跳跃，1 ~ maxReachTiles 格）
-    float clampedDist = std::clamp(aimDist, 1.0f, maxReachWorld);
-    int stepTiles = std::clamp((int)std::round(clampedDist), 1, maxReachTiles);
+    // A. 视线直线光束穿透检测：寻找射线前方碰撞到的第一个实心方块
+    Vec2I hitTile{};
+    bool foundRayHit = false;
+    float rayStep = 0.35f;
+    for (float dist = 1.0f; dist <= maxReach; dist += rayStep) {
+      Vec2F p = rayOrigin + aimDir * dist;
+      Vec2I t = Vec2I::floor(p);
+      if (world->isTileProtected(t))
+        continue;
+      MaterialId fg = world->material(t, TileLayer::Foreground);
+      MaterialId bg = world->material(t, TileLayer::Background);
+      if (isRealMaterial(fg) || isRealMaterial(bg)) {
+        hitTile = t;
+        foundRayHit = true;
+        break;
+      }
+    }
 
-    // 沿瞄准方向以方块为单位步进选择目标格子
-    Vec2I targetTile = playerTile + Vec2I::round(aimDir * (float)stepTiles);
+    if (foundRayHit) {
+      m_smartAimType = SmartAimTargetType::Tile;
+      m_smartAimTargetPos = Vec2F(hitTile) + Vec2F(0.5f, 0.5f);
+      m_smartAimHasTarget = true;
+      return m_smartAimTargetPos;
+    }
 
-    // 智能贴合实体方块：若目标周围 ±1 格有前景矿石或背景墙，优先跳跃锁定至该方块
-    Vec2I bestTile = targetTile;
-    bool foundSolid = false;
-    float bestSolidDist = 1e9f;
+    // B. 若前方空气：在瞄准扇面内寻找最近的可破坏实体方块 / 矿石
+    Vec2I bestTile{};
+    float bestScore = 1e9f;
+    bool foundNear = false;
+    int searchRange = (int)std::ceil(maxReach);
+    Vec2I pTile = Vec2I::floor(playerPos);
 
-    for (int dy = -1; dy <= 1; ++dy) {
-      for (int dx = -1; dx <= 1; ++dx) {
-        Vec2I checkTile = targetTile + Vec2I(dx, dy);
-        Vec2F checkCenter = Vec2F(checkTile) + Vec2F(0.5f, 0.5f);
-        if (world->geometry().diff(checkCenter, playerPos).magnitude() > maxReachWorld)
+    for (int dy = -searchRange; dy <= searchRange; ++dy) {
+      for (int dx = -searchRange; dx <= searchRange; ++dx) {
+        Vec2I t = pTile + Vec2I(dx, dy);
+        Vec2F tCenter = Vec2F(t) + Vec2F(0.5f, 0.5f);
+        Vec2F toT = world->geometry().diff(tCenter, playerPos);
+        float d = toT.magnitude();
+        if (d > maxReach || d < 0.8f)
           continue;
-        if (world->isTileProtected(checkTile))
+        if (world->isTileProtected(t))
           continue;
 
-        MaterialId fgMat = world->material(checkTile, TileLayer::Foreground);
-        MaterialId bgMat = world->material(checkTile, TileLayer::Background);
-        if (isRealMaterial(fgMat) || isRealMaterial(bgMat)) {
-          float d = (float)(std::abs(dx) + std::abs(dy));
-          if (isRealMaterial(fgMat))
-            d -= 0.5f;
-          if (d < bestSolidDist) {
-            bestSolidDist = d;
-            bestTile = checkTile;
-            foundSolid = true;
-          }
+        MaterialId fg = world->material(t, TileLayer::Foreground);
+        MaterialId bg = world->material(t, TileLayer::Background);
+        if (!isRealMaterial(fg) && !isRealMaterial(bg))
+          continue;
+
+        Vec2F dirToT = toT / d;
+        float dot = dirToT[0] * aimDir[0] + dirToT[1] * aimDir[1];
+        if (dot < 0.25f)
+          continue;
+
+        float score = d - dot * 3.5f;
+        if (isRealMaterial(fg))
+          score -= 2.0f;
+        if (score < bestScore) {
+          bestScore = score;
+          bestTile = t;
+          foundNear = true;
         }
       }
     }
 
-    Vec2I finalTile = foundSolid ? bestTile : targetTile;
+    if (foundNear) {
+      m_smartAimType = SmartAimTargetType::Tile;
+      m_smartAimTargetPos = Vec2F(bestTile) + Vec2F(0.5f, 0.5f);
+      m_smartAimHasTarget = true;
+      return m_smartAimTargetPos;
+    }
+
+    Vec2I targetTile = Vec2I::floor(rayOrigin + aimDir * std::min(aimDist, maxReach));
     m_smartAimType = SmartAimTargetType::Tile;
-    m_smartAimTargetPos = Vec2F(finalTile) + Vec2F(0.5f, 0.5f);
+    m_smartAimTargetPos = Vec2F(targetTile) + Vec2F(0.5f, 0.5f);
     m_smartAimHasTarget = true;
     return m_smartAimTargetPos;
   }
 
   // ==========================================
-  // 2. 武器战斗模式：极度舒适的手游级辅助瞄准（Aim Assist，非硬锁）
+  // 2. 武器战斗模式：精准吸附敌怪中心（不偏移、正中目标）
   // ==========================================
-  float enemySearchRadius = 24.0f;
+  float enemySearchRadius = 26.0f;
   RectF enemyQueryRect = RectF::withCenter(playerPos, Vec2F::filled(enemySearchRadius * 2.0f));
   shared_ptr<DamageBarEntity> bestEnemy;
   float bestEnemyScore = 1e9f;
@@ -1260,33 +1255,20 @@ Vec2F MainInterface::computeSmartAim(Vec2F const& rawAimPos) {
 
     Vec2F entDir = toEnt / d;
     float dot = entDir[0] * aimDir[0] + entDir[1] * aimDir[1];
-    // 仅在瞄准前方约 60 度锥形扇区内寻找敌怪
-    if (dot < 0.50f)
+    if (dot < 0.20f)
       continue;
 
-    Vec2F toCursor = world->geometry().diff(entPos, rawAimPos);
-    float cursorDist = toCursor.magnitude();
-    float score = cursorDist - dot * 10.0f;
+    float score = d - dot * 12.0f;
     if (score < bestEnemyScore) {
       bestEnemyScore = score;
       bestEnemy = entity;
     }
   }
 
-  if (bestEnemy && bestEnemyScore < 18.0f) {
-    Vec2F entPos = bestEnemy->position();
-    Vec2F toEnemy = world->geometry().diff(entPos, playerPos);
-    float entDist = toEnemy.magnitude();
-    Vec2F enemyDir = (entDist > 0.001f) ? (toEnemy / entDist) : aimDir;
-
-    float dot = std::clamp(aimDir[0] * enemyDir[0] + aimDir[1] * enemyDir[1], 0.0f, 1.0f);
-    // 柔性磁力引导（随偏角平滑衰减，绝不硬锁，玩家随时轻松脱锁）
-    float assistStrength = 0.55f * std::pow(dot, 1.2f);
-    Vec2F blendedDir = (aimDir * (1.0f - assistStrength) + enemyDir * assistStrength).normalized();
-    float targetDist = std::min(aimDist, entDist);
-
+  if (bestEnemy) {
+    // 直接精准锁定在敌怪模型中心，准星与攻击直达敌怪
     m_smartAimType = SmartAimTargetType::Enemy;
-    m_smartAimTargetPos = playerPos + blendedDir * targetDist;
+    m_smartAimTargetPos = bestEnemy->position();
     m_smartAimHasTarget = true;
     return m_smartAimTargetPos;
   }
