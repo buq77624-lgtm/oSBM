@@ -1624,19 +1624,27 @@ private:
     int64_t now = Time::monotonicMilliseconds();
     Vec2F delta;
 
-    if (m_aimJoystickActive && m_aimVec.magnitudeSquared() > 0.0001f) {
-      // 射击轮盘优先调控射击方向，拥有最高优先级
-      float sensitivity = 1.0f;
-      if (auto element = findElement(m_aimJoystickElementId))
-        sensitivity = std::clamp(element->aimSensitivity, 0.25f, 4.0f);
-      if (!aimJoystickPrecise()) {
-        float deflection = std::clamp(m_aimVec.magnitude(), 0.0f, 1.0f);
-        Vec2F direction = m_aimVec / std::max(0.0001f, m_aimVec.magnitude());
+    if (m_aimJoystickActive) {
+      if (m_aimVec.magnitudeSquared() > 0.0001f) {
+        // 射击轮盘优先调控射击方向，拥有最高优先级
+        float sensitivity = 1.0f;
+        if (auto element = findElement(m_aimJoystickElementId))
+          sensitivity = std::clamp(element->aimSensitivity, 0.25f, 4.0f);
+        if (!aimJoystickPrecise()) {
+          float deflection = std::clamp(m_aimVec.magnitude(), 0.0f, 1.0f);
+          Vec2F direction = m_aimVec / std::max(0.0001f, m_aimVec.magnitude());
+          emitDirectionalAim(direction, deflection, m_config.joystickAimCursorEnabled);
+          return;
+        } else {
+          float speed = controlRadius() * 0.22f * sensitivity * std::clamp(m_aimVec.magnitude(), 0.25f, 1.0f);
+          delta += m_aimVec * speed;
+        }
+      } else if (m_moveVec.magnitudeSquared() > 0.0001f) {
+        // 轻点射击轮盘但未拖拽：沿当前移动方向快速射击
+        float deflection = std::clamp(m_moveVec.magnitude(), 0.0f, 1.0f);
+        Vec2F direction = m_moveVec / std::max(0.0001f, m_moveVec.magnitude());
         emitDirectionalAim(direction, deflection, m_config.joystickAimCursorEnabled);
         return;
-      } else {
-        float speed = controlRadius() * 0.22f * sensitivity * std::clamp(m_aimVec.magnitude(), 0.25f, 1.0f);
-        delta += m_aimVec * speed;
       }
     } else if (m_joystickActive && m_moveVec.magnitudeSquared() > 0.0001f) {
       // 射击轮盘未操作时，移动轮盘调控人物头部朝向

@@ -5132,22 +5132,29 @@ private:
   Vec2U requestedRenderCanvasSize(Vec2U physicalCanvas) const {
     if (physicalCanvas[0] == 0 || physicalCanvas[1] == 0)
       return physicalCanvas;
-    if (m_requestedRenderResolution[0] == 0 || m_requestedRenderResolution[1] == 0)
+
+    unsigned shortSide = std::min(physicalCanvas[0], physicalCanvas[1]);
+    unsigned longSide = std::max(physicalCanvas[0], physicalCanvas[1]);
+
+    // 移动端短边基准：若未显式指定，默认以 1080p 为基准短边（长边自适应物理屏宽高比）
+    // 像 3200x1400 旗舰机内部渲染画布为 2468x1080，再经由 GL_LINEAR 双线性滤波平滑铺满原生高分屏
+    unsigned targetShort = 1080;
+    if (m_requestedRenderResolution[0] > 0 && m_requestedRenderResolution[1] > 0)
+      targetShort = std::min(m_requestedRenderResolution[0], m_requestedRenderResolution[1]);
+
+    if (shortSide <= targetShort)
       return physicalCanvas;
 
-    Vec2U request = m_requestedRenderResolution;
-    if ((physicalCanvas[0] >= physicalCanvas[1]) != (request[0] >= request[1]))
-      std::swap(request[0], request[1]);
-
-    if (request[0] >= physicalCanvas[0] && request[1] >= physicalCanvas[1])
-      return physicalCanvas;
-
-    float scale = std::min((float)request[0] / (float)physicalCanvas[0], (float)request[1] / (float)physicalCanvas[1]);
+    float scale = (float)targetShort / (float)shortSide;
     scale = std::clamp(scale, 0.1f, 1.0f);
-    return {
-      std::max(320u, (unsigned)std::round((float)physicalCanvas[0] * scale)),
-      std::max(240u, (unsigned)std::round((float)physicalCanvas[1] * scale))
-    };
+
+    unsigned scaledLong = (unsigned)std::round((float)longSide * scale);
+    unsigned scaledShort = targetShort;
+
+    if (physicalCanvas[0] >= physicalCanvas[1])
+      return { scaledLong, scaledShort };
+    else
+      return { scaledShort, scaledLong };
   }
 
   void setRequestedRenderResolution(Vec2U resolution) {

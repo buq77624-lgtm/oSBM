@@ -1241,9 +1241,19 @@ Vec2F MainInterface::computeSmartAim(Vec2F const& rawAimPos) {
   }
 
   // ==========================================
-  // 2. 武器战斗模式：精准吸附敌怪模型中心（正中敌怪胸腔）
+  // 2. 武器战斗模式：针对长矛(Spear)、枪械(Guns)、弓箭与双手武器深度适配
   // ==========================================
-  float enemySearchRadius = 22.0f;
+  bool isRangedOrSpear = false;
+  if (auto item = player->primaryHandItem()) {
+    String n = item->name().toLower();
+    if (n.contains("spear") || n.contains("rifle") || n.contains("pistol") || n.contains("gun")
+        || n.contains("shotgun") || n.contains("sniper") || n.contains("bow") || n.contains("launcher")
+        || n.contains("staff") || n.contains("wand"))
+      isRangedOrSpear = true;
+  }
+
+  // 长矛与枪械拥有全屏幕超视距攻击需求，搜索半径扩大至 32.0f
+  float enemySearchRadius = isRangedOrSpear ? 32.0f : 22.0f;
   RectF enemyQueryRect = RectF::withCenter(playerPos, Vec2F::filled(enemySearchRadius * 2.0f));
   shared_ptr<DamageBarEntity> bestEnemy;
   float bestEnemyScore = 1e9f;
@@ -1263,11 +1273,15 @@ Vec2F MainInterface::computeSmartAim(Vec2F const& rawAimPos) {
 
     Vec2F entDir = toEnt / d;
     float dot = entDir[0] * aimDir[0] + entDir[1] * aimDir[1];
-    if (dot < 0.15f)
+
+    // 长矛与枪械对准度要求极高：当轮盘偏向目标时提供强力磁吸
+    float minDot = isRangedOrSpear ? 0.08f : 0.15f;
+    if (dot < minDot)
       continue;
 
-    // 优先锁定近处与视线方向吻合的目标，避免越过近怪锁高空远怪
-    float score = d * (1.6f - dot);
+    // 综合打分：长矛与枪械给予夹角更高的吸引权重，确保弹道与矛尖直线贯穿敌怪胸腔
+    float dotWeight = isRangedOrSpear ? 2.2f : 1.6f;
+    float score = d * (dotWeight - dot);
     if (score < bestEnemyScore) {
       bestEnemyScore = score;
       bestEnemy = entity;
