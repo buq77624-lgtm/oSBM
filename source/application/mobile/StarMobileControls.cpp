@@ -205,7 +205,7 @@ std::vector<MobileTouchElement> defaultTouchElements() {
     {"aimJoystick", launcherTextStatic("touchElement.aimJoystick", "主手"), MobileTouchElementKind::AimJoystick, true, {0.84f, 0.72f}, 1.30f, mouseAction(MouseButton::Left), {}, {}, {}, {}},
     {"leftHand", launcherTextStatic("touchElement.leftHand", "攻击"), MobileTouchElementKind::Button, false, {0.70f, 0.68f}, 1.15f, mouseAction(MouseButton::Left), {}, {}, {}, {}},
     {"altFire", launcherTextStatic("touchElement.altFire", "副手"), MobileTouchElementKind::Button, true, {0.70f, 0.58f}, 1.15f, mouseAction(MouseButton::Right), {}, {}, {}, {}},
-    {"jump", launcherTextStatic("touchElement.jump", "跳跃"), MobileTouchElementKind::Button, true, {0.92f, 0.88f}, 1.10f, keyAction(Key::Space), {}, {}, {}, {}},
+    {"jump", launcherTextStatic("touchElement.jump", "跳跃"), MobileTouchElementKind::Button, true, {0.92f, 0.88f}, 1.10f, keyAction(Key::Space), {}, {}, {}, {}, MobileTouchPressMode::Hold},
     {"interact", launcherTextStatic("touchElement.interact", "E"), MobileTouchElementKind::Button, true, {0.74f, 0.40f}, 1.00f, keyAction(Key::E), {}, {}, {}, {}},
     {"tech", launcherTextStatic("touchElement.tech", "Tech"), MobileTouchElementKind::Button, true, {0.88f, 0.48f}, 0.95f, keyAction(Key::F), {}, {}, {}, {}},
     {"smartAim", launcherTextStatic("touchElement.smartAim", "自瞄"), MobileTouchElementKind::Button, true, {0.88f, 0.34f}, 0.95f, keyAction(Key::F8), {}, {}, {}, {}, MobileTouchPressMode::SinglePress},
@@ -1142,50 +1142,69 @@ private:
     state.downTimeMs = Time::monotonicMilliseconds();
 
     bool claimedControl = false;
+    MobileTouchElement const* bestElem = nullptr;
+    float bestNormDist = 1.0f;
     for (auto const& element : m_elements) {
       if (!element.enabled)
         continue;
 
       Vec2F center = elementCenter(element);
       float elementRadius = radius * std::clamp(element.size, 0.45f, 2.4f);
-      if (element.kind == MobileTouchElementKind::Button && insideCircle(pos, center, elementRadius * 0.70f)) {
+      float triggerRadius = elementRadius * 1.15f;
+      if (element.kind == MobileTouchElementKind::Joystick || element.kind == MobileTouchElementKind::AimJoystick) {
+        triggerRadius = elementRadius * 1.25f;
+        if (element.kind == MobileTouchElementKind::Joystick && m_joystickActive)
+          continue;
+        if (element.kind == MobileTouchElementKind::AimJoystick && m_aimJoystickActive)
+          continue;
+      }
+
+      float dist = (pos - center).magnitude();
+      if (dist <= triggerRadius) {
+        float normDist = dist / triggerRadius;
+        if (normDist < bestNormDist) {
+          bestNormDist = normDist;
+          bestElem = &element;
+        }
+      }
+    }
+
+    if (bestElem) {
+      Vec2F center = elementCenter(*bestElem);
+      if (bestElem->kind == MobileTouchElementKind::Button) {
         state.role = FingerRole::ActionButton;
-        state.elementId = element.id;
-        state.action = element.action;
-        state.pressMode = element.pressMode;
-        pressActionButton(element);
+        state.elementId = bestElem->id;
+        state.action = bestElem->action;
+        state.pressMode = bestElem->pressMode;
+        pressActionButton(*bestElem);
         claimedControl = true;
-        break;
-      } else if (element.kind == MobileTouchElementKind::DPad && insideCircle(pos, center, elementRadius * 1.15f)) {
+      } else if (bestElem->kind == MobileTouchElementKind::DPad) {
         state.role = FingerRole::DPad;
-        state.elementId = element.id;
+        state.elementId = bestElem->id;
         updateDPadFinger(state, pos);
         claimedControl = true;
-        break;
-      } else if (element.kind == MobileTouchElementKind::Joystick && insideCircle(pos, center, elementRadius * 1.25f) && !m_joystickActive) {
+      } else if (bestElem->kind == MobileTouchElementKind::Joystick) {
         state.role = FingerRole::Joystick;
-        state.elementId = element.id;
+        state.elementId = bestElem->id;
         m_joystickActive = true;
         m_joystickFinger = finger;
-        m_joystickElementId = element.id;
+        m_joystickElementId = bestElem->id;
         m_joystickOrigin = center;
         m_joystickCurrent = pos;
         m_moveVec = {};
         claimedControl = true;
-        break;
-      } else if (element.kind == MobileTouchElementKind::AimJoystick && insideCircle(pos, center, elementRadius * 1.25f) && !m_aimJoystickActive) {
+      } else if (bestElem->kind == MobileTouchElementKind::AimJoystick) {
         state.role = FingerRole::AimJoystick;
-        state.elementId = element.id;
+        state.elementId = bestElem->id;
         m_aimJoystickActive = true;
         m_aimJoystickFinger = finger;
-        m_aimJoystickElementId = element.id;
+        m_aimJoystickElementId = bestElem->id;
         m_aimJoystickOrigin = center;
         m_aimJoystickCurrent = pos;
         m_aimJoystickDownTimeMs = Time::monotonicMilliseconds();
         ensureAimTarget();
         updateAimJoystickFinger(state, pos);
         claimedControl = true;
-        break;
       }
     }
 

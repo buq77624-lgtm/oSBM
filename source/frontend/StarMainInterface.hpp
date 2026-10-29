@@ -312,6 +312,16 @@ private:
   bool m_smartAimHasTarget = false;
   bool m_mobileFiringPrimary = false;
 
+  void renderActionBarSlider();
+  bool handleActionBarSliderInput(InputEvent const& event);
+  List<SelectedActionBarLocation> getActionBarSliderLocations() const;
+  RectF actionBarSliderRect() const;
+  RectF actionBarSliderTouchRect() const;
+
+  bool m_scrubSliderDragging = false;
+  float m_scrubSliderHintTimer = 0.0f;
+  String m_scrubSliderHintText;
+
   String m_lastCommand;
 
   LinkedList<GuiMessagePtr> m_messages;

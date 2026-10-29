@@ -324,6 +324,9 @@ bool MainInterface::handleInputEvent(InputEvent const& event) {
   auto inv = player->inventory();
   auto& root = Root::singleton();
 
+  if (handleActionBarSliderInput(event))
+    return true;
+
   if (auto mouseMove = event.ptr<MouseMoveEvent>()) {
     m_cursorScreenIPos = Vec2I::round(m_cursorScreenPos = mouseMove->mousePosition);
     m_cursorVisible = mouseMove->cursorVisible;
@@ -618,6 +621,10 @@ void MainInterface::preUpdate(float) {
     Vec2F rawAim = m_worldPainter->camera().screenToWorld(m_cursorScreenPos);
     Vec2F aim = m_smartAimActive ? computeSmartAim(rawAim) : rawAim;
     player->aim(aim);
+    if (m_smartAimActive && m_smartAimHasTarget) {
+      m_cursorScreenPos = m_worldPainter->camera().worldToScreen(aim);
+      m_cursorScreenIPos = Vec2I::round(m_cursorScreenPos);
+    }
   }
 
   if (m_paneManager.topPane({PaneLayer::Window, PaneLayer::ModalWindow}))
@@ -629,6 +636,9 @@ void MainInterface::preUpdate(float) {
 }
 
 void MainInterface::update(float dt) {
+  if (m_scrubSliderHintTimer > 0.0f)
+    m_scrubSliderHintTimer = std::max(0.0f, m_scrubSliderHintTimer - dt);
+
   m_paneManager.update(dt);
   m_cursor.update(dt);
   m_cursorDraggingCached = (bool)m_client->mainPlayer()->inventory()->swapSlotItem();
@@ -1015,7 +1025,9 @@ void MainInterface::renderCursorOverlay() {
   if (m_disableHud)
     return;
   renderSmartAimReticle();
-  renderCursor();
+  renderActionBarSlider();
+  if (!m_smartAimActive || !m_smartAimHasTarget)
+    renderCursor();
   m_guiContext->clearTextStyle();
 }
 
@@ -1153,18 +1165,18 @@ Vec2F MainInterface::computeSmartAim(Vec2F const& rawAimPos) {
     float maxReach = std::clamp(player->toolRadius() * 1.5f, 10.0f, 18.0f);
     Vec2F rayOrigin = playerPos + Vec2F(0.0f, 0.5f);
 
-    // A. 视线直线光束穿透检测：寻找射线前方碰撞到的第一个实心方块
+    // A. 视线直线光束穿透检测：寻找射线前方碰撞到的第一个前景实体方块
+    // 注意：默认绝不阻挡在背景墙(Background)上，彻底避免在半空中错误吸附背景
     Vec2I hitTile{};
     bool foundRayHit = false;
-    float rayStep = 0.35f;
-    for (float dist = 1.0f; dist <= maxReach; dist += rayStep) {
+    float rayStep = 0.25f;
+    for (float dist = 0.8f; dist <= maxReach; dist += rayStep) {
       Vec2F p = rayOrigin + aimDir * dist;
       Vec2I t = Vec2I::floor(p);
       if (world->isTileProtected(t))
         continue;
       MaterialId fg = world->material(t, TileLayer::Foreground);
-      MaterialId bg = world->material(t, TileLayer::Background);
-      if (isRealMaterial(fg) || isRealMaterial(bg)) {
+      if (isRealMaterial(fg)) {
         hitTile = t;
         foundRayHit = true;
         break;
@@ -1178,7 +1190,7 @@ Vec2F MainInterface::computeSmartAim(Vec2F const& rawAimPos) {
       return m_smartAimTargetPos;
     }
 
-    // B. 若前方空气：在瞄准扇面内寻找最近的可破坏实体方块 / 矿石
+    // B. 若前方空气：在瞄准扇面内寻找最近的可破坏前景方块 / 矿石
     Vec2I bestTile{};
     float bestScore = 1e9f;
     bool foundNear = false;
@@ -1197,8 +1209,7 @@ Vec2F MainInterface::computeSmartAim(Vec2F const& rawAimPos) {
           continue;
 
         MaterialId fg = world->material(t, TileLayer::Foreground);
-        MaterialId bg = world->material(t, TileLayer::Background);
-        if (!isRealMaterial(fg) && !isRealMaterial(bg))
+        if (!isRealMaterial(fg))
           continue;
 
         Vec2F dirToT = toT / d;
@@ -1206,9 +1217,7 @@ Vec2F MainInterface::computeSmartAim(Vec2F const& rawAimPos) {
         if (dot < 0.25f)
           continue;
 
-        float score = d - dot * 3.5f;
-        if (isRealMaterial(fg))
-          score -= 2.0f;
+        float score = d - dot * 4.0f;
         if (score < bestScore) {
           bestScore = score;
           bestTile = t;
@@ -1232,9 +1241,9 @@ Vec2F MainInterface::computeSmartAim(Vec2F const& rawAimPos) {
   }
 
   // ==========================================
-  // 2. 武器战斗模式：精准吸附敌怪中心（不偏移、正中目标）
+  // 2. 武器战斗模式：精准吸附敌怪模型中心（正中敌怪胸腔）
   // ==========================================
-  float enemySearchRadius = 26.0f;
+  float enemySearchRadius = 22.0f;
   RectF enemyQueryRect = RectF::withCenter(playerPos, Vec2F::filled(enemySearchRadius * 2.0f));
   shared_ptr<DamageBarEntity> bestEnemy;
   float bestEnemyScore = 1e9f;
@@ -1242,23 +1251,23 @@ Vec2F MainInterface::computeSmartAim(Vec2F const& rawAimPos) {
   for (auto const& entity : world->query<DamageBarEntity>(enemyQueryRect)) {
     if (entity == player)
       continue;
-    if (entity->damageBar() != DamageBarType::Default && entity->damageBar() != DamageBarType::Special)
-      continue;
-    if (entity->getTeam().type != TeamType::Enemy && entity->getTeam().type != TeamType::PVP)
+    // 过滤友方目标，其他所有非友方敌怪/野怪全部允许自瞄
+    if (entity->getTeam().type == TeamType::Friendly)
       continue;
 
-    Vec2F entPos = entity->position();
-    Vec2F toEnt = world->geometry().diff(entPos, playerPos);
+    Vec2F entCenter = entity->position() + entity->metaBoundBox().center();
+    Vec2F toEnt = world->geometry().diff(entCenter, playerPos);
     float d = toEnt.magnitude();
     if (d > enemySearchRadius || d < 0.5f)
       continue;
 
     Vec2F entDir = toEnt / d;
     float dot = entDir[0] * aimDir[0] + entDir[1] * aimDir[1];
-    if (dot < 0.20f)
+    if (dot < 0.15f)
       continue;
 
-    float score = d - dot * 12.0f;
+    // 优先锁定近处与视线方向吻合的目标，避免越过近怪锁高空远怪
+    float score = d * (1.6f - dot);
     if (score < bestEnemyScore) {
       bestEnemyScore = score;
       bestEnemy = entity;
@@ -1266,14 +1275,215 @@ Vec2F MainInterface::computeSmartAim(Vec2F const& rawAimPos) {
   }
 
   if (bestEnemy) {
-    // 直接精准锁定在敌怪模型中心，准星与攻击直达敌怪
     m_smartAimType = SmartAimTargetType::Enemy;
-    m_smartAimTargetPos = bestEnemy->position();
+    m_smartAimTargetPos = bestEnemy->position() + bestEnemy->metaBoundBox().center();
     m_smartAimHasTarget = true;
     return m_smartAimTargetPos;
   }
 
   return rawAimPos;
+}
+
+List<SelectedActionBarLocation> MainInterface::getActionBarSliderLocations() const {
+  List<SelectedActionBarLocation> locs;
+  if (!m_client) return locs;
+  auto player = m_client->mainPlayer();
+  if (!player) return locs;
+  auto inv = player->inventory();
+  if (!inv) return locs;
+
+  uint8_t count = inv->customBarIndexes();
+  uint8_t half = count / 2;
+
+  for (uint8_t i = 0; i < half; ++i)
+    locs.append(SelectedActionBarLocation(CustomBarIndex(i)));
+
+  locs.append(SelectedActionBarLocation(EssentialItem::BeamAxe));
+  locs.append(SelectedActionBarLocation(EssentialItem::WireTool));
+  locs.append(SelectedActionBarLocation(EssentialItem::PaintTool));
+  locs.append(SelectedActionBarLocation(EssentialItem::InspectionTool));
+
+  for (uint8_t i = half; i < count; ++i)
+    locs.append(SelectedActionBarLocation(CustomBarIndex(i)));
+
+  return locs;
+}
+
+RectF MainInterface::actionBarSliderRect() const {
+  if (!m_actionBar)
+    return RectF::null();
+  RectI barRect = m_actionBar->screenBoundRect();
+  if (barRect.isEmpty())
+    return RectF::null();
+
+  float width = (float)barRect.width();
+  float height = 8.0f * interfaceScale();
+  float x0 = (float)barRect.xMin();
+  float x1 = (float)barRect.xMax();
+  float y0 = (float)barRect.yMin() - height - 3.0f;
+  float y1 = (float)barRect.yMin() - 3.0f;
+  return RectF(x0, y0, x1, y1);
+}
+
+RectF MainInterface::actionBarSliderTouchRect() const {
+  RectF r = actionBarSliderRect();
+  if (r.isEmpty())
+    return RectF::null();
+  float padY = 20.0f * interfaceScale();
+  return RectF(r.xMin() - 14.0f, r.yMin() - padY, r.xMax() + 14.0f, r.yMax() + padY * 0.4f);
+}
+
+bool MainInterface::handleActionBarSliderInput(InputEvent const& event) {
+  if (m_disableHud || !m_actionBar)
+    return false;
+
+  RectF touchRect = actionBarSliderTouchRect();
+  if (touchRect.isEmpty())
+    return false;
+
+  auto updateFromX = [this](float x) {
+    RectF sliderRect = actionBarSliderRect();
+    if (sliderRect.isEmpty()) return;
+    float progress = std::clamp((x - sliderRect.xMin()) / std::max(1.0f, sliderRect.width()), 0.0f, 1.0f);
+    auto locs = getActionBarSliderLocations();
+    if (locs.empty()) return;
+    int idx = std::clamp((int)std::round(progress * (float)(locs.size() - 1)), 0, (int)locs.size() - 1);
+    auto targetLoc = locs[idx];
+    auto player = m_client->mainPlayer();
+    if (player && player->inventory()) {
+      auto currentLoc = player->inventory()->selectedActionBarLocation();
+      if (currentLoc != targetLoc) {
+        player->inventory()->selectActionBarLocation(targetLoc);
+        String name;
+        if (targetLoc.is<EssentialItem>()) {
+          auto ess = targetLoc.get<EssentialItem>();
+          if (ess == EssentialItem::BeamAxe) name = "物质枪 (BeamAxe)";
+          else if (ess == EssentialItem::WireTool) name = "接线枪 (WireTool)";
+          else if (ess == EssentialItem::PaintTool) name = "喷漆枪 (PaintTool)";
+          else if (ess == EssentialItem::InspectionTool) name = "扫描仪 (Inspection)";
+        } else {
+          auto cbi = targetLoc.get<CustomBarIndex>();
+          name = strf("快捷栏 [{}]", cbi + 1);
+          if (auto pSlot = player->inventory()->customBarPrimarySlot(cbi)) {
+            if (auto it = player->inventory()->itemsAt(*pSlot))
+              name += " " + it->friendlyName();
+          }
+        }
+        m_scrubSliderHintText = name;
+        m_scrubSliderHintTimer = 1.8f;
+      }
+    }
+  };
+
+  if (auto md = event.ptr<MouseButtonDownEvent>()) {
+    if (md->mouseButton == MouseButton::Left && touchRect.contains(Vec2F(md->mousePosition))) {
+      m_scrubSliderDragging = true;
+      updateFromX((float)md->mousePosition[0]);
+      return true;
+    }
+  } else if (auto mm = event.ptr<MouseMoveEvent>()) {
+    if (m_scrubSliderDragging) {
+      updateFromX((float)mm->mousePosition[0]);
+      return true;
+    }
+  } else if (auto mu = event.ptr<MouseButtonUpEvent>()) {
+    if (m_scrubSliderDragging && mu->mouseButton == MouseButton::Left) {
+      m_scrubSliderDragging = false;
+      return true;
+    }
+  }
+  return false;
+}
+
+void MainInterface::renderActionBarSlider() {
+  if (m_disableHud || !m_actionBar)
+    return;
+
+  RectF rect = actionBarSliderRect();
+  if (rect.isEmpty())
+    return;
+
+  auto player = m_client->mainPlayer();
+  if (!player || !player->inventory())
+    return;
+
+  auto locs = getActionBarSliderLocations();
+  if (locs.empty())
+    return;
+
+  auto currentLoc = player->inventory()->selectedActionBarLocation();
+
+  // 1. 轨道底色与微光边框
+  Vec4B trackBg(14, 20, 32, 210);
+  Vec4B trackBorder(50, 85, 125, 230);
+  m_guiContext->drawQuad(rect, trackBg);
+  m_guiContext->drawInterfaceLine(Vec2F(rect.xMin(), rect.yMin()), Vec2F(rect.xMax(), rect.yMin()), trackBorder, 1.0f);
+  m_guiContext->drawInterfaceLine(Vec2F(rect.xMax(), rect.yMin()), Vec2F(rect.xMax(), rect.yMax()), trackBorder, 1.0f);
+  m_guiContext->drawInterfaceLine(Vec2F(rect.xMax(), rect.yMax()), Vec2F(rect.xMin(), rect.yMax()), trackBorder, 1.0f);
+  m_guiContext->drawInterfaceLine(Vec2F(rect.xMin(), rect.yMax()), Vec2F(rect.xMin(), rect.yMin()), trackBorder, 1.0f);
+
+  // 2. 槽位刻度点与当前选中索引
+  float step = rect.width() / (float)(locs.size() - 1);
+  int activeIndex = -1;
+  float centerY = (rect.yMin() + rect.yMax()) * 0.5f;
+
+  for (size_t i = 0; i < locs.size(); ++i) {
+    float x = rect.xMin() + (float)i * step;
+    bool isEssential = locs[i].is<EssentialItem>();
+    bool isCurrent = (locs[i] == currentLoc);
+    if (isCurrent)
+      activeIndex = (int)i;
+
+    Vec4B tickColor = isEssential ? Vec4B(255, 215, 0, 220) : Vec4B(120, 180, 240, 180);
+    float tickHalf = isEssential ? 2.5f : 1.5f;
+    m_guiContext->drawQuad(RectF(x - tickHalf, centerY - tickHalf, x + tickHalf, centerY + tickHalf), tickColor);
+  }
+
+  // 3. 动态滑块（Thumb）
+  if (activeIndex >= 0) {
+    float thumbTargetX = rect.xMin() + (float)activeIndex * step;
+    float thumbWidth = std::max(14.0f, step * 0.85f);
+    float thumbX0 = thumbTargetX - thumbWidth * 0.5f;
+    float thumbX1 = thumbTargetX + thumbWidth * 0.5f;
+    float thumbY0 = rect.yMin() - 1.5f;
+    float thumbY1 = rect.yMax() + 1.5f;
+
+    bool isEssential = locs[activeIndex].is<EssentialItem>();
+    Vec4B thumbFill = isEssential ? Vec4B(255, 190, 0, 190) : Vec4B(0, 200, 255, 190);
+    Vec4B thumbBorder = isEssential ? Vec4B(255, 255, 160, 255) : Vec4B(220, 255, 255, 255);
+
+    m_guiContext->drawQuad(RectF(thumbX0, thumbY0, thumbX1, thumbY1), thumbFill);
+    m_guiContext->drawInterfaceLine(Vec2F(thumbX0, thumbY0), Vec2F(thumbX1, thumbY0), thumbBorder, 1.5f);
+    m_guiContext->drawInterfaceLine(Vec2F(thumbX1, thumbY0), Vec2F(thumbX1, thumbY1), thumbBorder, 1.5f);
+    m_guiContext->drawInterfaceLine(Vec2F(thumbX1, thumbY1), Vec2F(thumbX0, thumbY1), thumbBorder, 1.5f);
+    m_guiContext->drawInterfaceLine(Vec2F(thumbX0, thumbY1), Vec2F(thumbX0, thumbY0), thumbBorder, 1.5f);
+  }
+
+  // 4. 浮动提示标签
+  if (m_scrubSliderHintTimer > 0.0f && !m_scrubSliderHintText.empty()) {
+    float alpha = std::clamp(m_scrubSliderHintTimer / 0.3f, 0.0f, 1.0f);
+    Vec4B textColor(255, 255, 255, (uint8_t)(255 * alpha));
+    Vec4B textBg(10, 14, 22, (uint8_t)(210 * alpha));
+    Vec4B textBorder(60, 120, 200, (uint8_t)(230 * alpha));
+
+    float tx = (rect.xMin() + rect.xMax()) * 0.5f;
+    float ty = rect.yMin() - 22.0f;
+    TextPositioning pos(Vec2F(tx, ty + 3.0f), HorizontalAnchor::HMidAnchor);
+    RectF textBounds = m_guiContext->determineTextSize(m_scrubSliderHintText, pos);
+    float tw = textBounds.width() + 12.0f;
+    float th = textBounds.height() + 6.0f;
+    ty = rect.yMin() - th - 5.0f;
+    pos.pos = Vec2F(tx, ty + 3.0f);
+
+    RectF hintBox(tx - tw * 0.5f, ty, tx + tw * 0.5f, ty + th);
+    m_guiContext->drawQuad(hintBox, textBg);
+    m_guiContext->drawInterfaceLine(Vec2F(hintBox.xMin(), hintBox.yMin()), Vec2F(hintBox.xMax(), hintBox.yMin()), textBorder, 1.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(hintBox.xMax(), hintBox.yMin()), Vec2F(hintBox.xMax(), hintBox.yMax()), textBorder, 1.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(hintBox.xMax(), hintBox.yMax()), Vec2F(hintBox.xMin(), hintBox.yMax()), textBorder, 1.0f);
+    m_guiContext->drawInterfaceLine(Vec2F(hintBox.xMin(), hintBox.yMax()), Vec2F(hintBox.xMin(), hintBox.yMin()), textBorder, 1.0f);
+
+    m_guiContext->renderText(m_scrubSliderHintText, pos);
+  }
 }
 
 void MainInterface::renderSmartAimReticle() {
