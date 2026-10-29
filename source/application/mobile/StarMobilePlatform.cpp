@@ -2606,6 +2606,8 @@ private:
       element.position[0] = std::clamp(element.position[0] + delta.x / std::max(1.0f, canvasSize.x), 0.03f, 0.97f);
       element.position[1] = std::clamp(element.position[1] + delta.y / std::max(1.0f, canvasSize.y), 0.03f, 0.97f);
     }
+    if (ImGui::IsItemDeactivated())
+      persistLauncherState(state);
     ImGui::PopID();
 
     if (element.kind == MobileTouchElementKind::DPad) {
@@ -2663,12 +2665,14 @@ private:
     if (state.selectedTouchElement >= 0 && state.selectedTouchElement < (int)state.touchElements.size()) {
       auto& selected = state.touchElements[state.selectedTouchElement];
       ImGui::Text("%s: %s", launcherText("touchPreview.selectedLabel", "Selected").utf8Ptr(), selected.label.utf8Ptr());
-      ImGui::SliderFloat(launcherText("touchPreview.selectedSize", "Selected size").utf8Ptr(), &selected.size, 0.45f, 2.4f, "%.2f x");
+      if (ImGui::SliderFloat(launcherText("touchPreview.selectedSize", "Selected size").utf8Ptr(), &selected.size, 0.45f, 2.4f, "%.2f x"))
+        persistLauncherState(state);
       if (selected.id.beginsWith("custom")) {
         ImGui::SameLine();
         if (ImGui::Button(launcherText("touchManager.deleteButton", "Delete").utf8Ptr())) {
           state.touchElements.erase(state.touchElements.begin() + state.selectedTouchElement);
           state.selectedTouchElement = -1;
+          persistLauncherState(state);
         }
       }
       if (selected.kind == MobileTouchElementKind::PerformanceCounter) {
@@ -2692,8 +2696,10 @@ private:
         }
       }
     }
-    if (ImGui::Button(launcherText("common.done", "Done").utf8Ptr(), ImVec2(120.0f, 0.0f)))
+    if (ImGui::Button(launcherText("common.done", "Done").utf8Ptr(), ImVec2(120.0f, 0.0f))) {
+      persistLauncherState(state);
       state.touchPreviewOpen = false;
+    }
     ImGui::EndChild();
 
     std::vector<PreviewLabel> labels;
@@ -3163,6 +3169,7 @@ private:
   // if the gesture consumed a navigation step.
   bool navigateLauncherBack(LauncherState& state) {
     if (state.touchPreviewOpen) {
+      persistLauncherState(state);
       state.touchPreviewOpen = false;
       return true;
     }

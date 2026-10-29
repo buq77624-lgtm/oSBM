@@ -420,9 +420,12 @@ JsonArray jsonFromTouchElements(std::vector<MobileTouchElement> const& elements)
 
 std::vector<MobileTouchElement> touchElementsFromConfig(Json const& config) {
   auto elements = defaultTouchElements();
+  StringSet savedIds;
   if (auto saved = config.optQueryArray("touch.elements")) {
     for (auto const& savedElementJson : *saved) {
       String id = savedElementJson.getString("id", "");
+      if (!id.empty())
+        savedIds.add(id);
       bool merged = false;
       for (auto& element : elements) {
         if (element.id == id) {
@@ -450,36 +453,36 @@ std::vector<MobileTouchElement> touchElementsFromConfig(Json const& config) {
       altElem = &elem;
   }
 
-  // 1. 如果旧存档中有 leftHand 攻击按键，但 aimJoystick 未激活或不存在：
   if (aimJoy) {
     aimJoy->enabled = true;
     aimJoy->kind = MobileTouchElementKind::AimJoystick;
     aimJoy->label = launcherTextStatic("touchElement.aimJoystick", "主手");
-    if (leftHand && leftHand->enabled) {
-      // 继承原有攻击按键的位置与尺寸，完成无缝无痛升级为射击轮盘
+    // 仅在用户存档中从未显式定义过 aimJoystick 时，才从旧 leftHand 继承
+    if (!savedIds.contains("aimJoystick") && leftHand && leftHand->enabled) {
       aimJoy->position = leftHand->position;
-      aimJoy->size = std::max(aimJoy->size, leftHand->size);
+      aimJoy->size = leftHand->size;
       leftHand->enabled = false;
     }
   } else {
     Vec2F pos = leftHand ? leftHand->position : Vec2F{0.84f, 0.72f};
-    float sz = leftHand ? std::max(1.25f, leftHand->size) : 1.30f;
+    float sz = leftHand ? leftHand->size : 1.30f;
     elements.push_back({"aimJoystick", launcherTextStatic("touchElement.aimJoystick", "主手"), MobileTouchElementKind::AimJoystick, true, pos, sz, mouseAction(MouseButton::Left), {}, {}, {}, {}});
     if (leftHand)
       leftHand->enabled = false;
   }
 
-  // 2. 避免普通攻击按键与射击轮盘重叠冲突，主开火由射击轮盘全权负责
+  // 避免普通攻击按键与射击轮盘重叠冲突
   if (leftHand && aimJoy && (leftHand->position - aimJoy->position).magnitudeSquared() < 0.04f)
     leftHand->enabled = false;
 
-  // 3. 确保【副手】(altFire) 处于紧邻主手射击轮盘的黄金操作区 {0.70f, 0.58f}
+  // 确保副手(altFire)处于黄金操作区，完全尊重用户保存的尺寸
   if (altElem) {
     altElem->enabled = true;
     altElem->label = launcherTextStatic("touchElement.altFire", "副手");
-    if (altElem->position[1] > 0.75f)
-      altElem->position = {0.70f, 0.58f};
-    altElem->size = std::max(1.10f, altElem->size);
+    if (!savedIds.contains("altFire")) {
+      if (altElem->position[1] > 0.75f)
+        altElem->position = {0.70f, 0.58f};
+    }
   } else {
     elements.push_back({"altFire", launcherTextStatic("touchElement.altFire", "副手"), MobileTouchElementKind::Button, true, {0.70f, 0.58f}, 1.15f, mouseAction(MouseButton::Right), {}, {}, {}, {}});
   }
